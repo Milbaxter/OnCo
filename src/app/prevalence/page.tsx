@@ -21,7 +21,7 @@ export default function Prevalence() {
   return (
     <>
       <PageHeader kicker={<GroupKicker id="map" />} title="Biomarker prevalence"
-        lede={`${rows} sourced estimates across ${targets.length} targets and ${cancers.length} cancers. Each cell is the share of that cancer expressing or carrying the target or alteration, by the measure noted on hover. Population-level and approximate: use it to see how common an option is, not to decide a case.`} />
+        lede={`${rows} sourced estimates across ${targets.length} targets and ${cancers.length} cancers, which is ${Math.round((rows / (targets.length * cancers.length)) * 100)} per cent of the pairs that could be filled. Each figure is the share of that cancer expressing or carrying the target or alteration, by the measure shown on hover. Population-level and approximate: use it to see how common an option is, not to decide a case.`} />
       <Container className="pb-16">
         <PrevalenceMatrix targets={targets} cancers={cancers} />
       </Container>
