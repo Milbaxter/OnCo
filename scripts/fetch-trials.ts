@@ -14,9 +14,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { graph } from "../src/lib/graph";
 
-const out = join(process.cwd(), "public", "trials");
-mkdirSync(out, { recursive: true });
-const ONLY = process.argv.find((a) => a.startsWith("--only="))?.slice(7);
 
 export type Study = { nct: string; title: string; status: string; phases: string[]; conditions: string[]; start?: string; primaryCompletion?: string; sponsor?: string; hasResults?: boolean };
 export type DrugTrials = { drugId: string; query: string; fetched: string; total: number; studies: Study[] };
@@ -77,12 +74,26 @@ function readPrev(path: string): DrugTrials | null {
   try { return JSON.parse(readFileSync(path, "utf8")) as DrugTrials; } catch { return null; }
 }
 
-async function main() {
-  const g = graph();
-  const drugs = g.kind("drug").filter((d) => !ONLY || d.id === ONLY);
+type TrialProduct = { id: string; name: string; code?: string };
+type RefreshOptions = { directory: string; only?: string; request?: typeof fetchJson; pause?: typeof sleep };
+
+/** Refresh snapshots and their index together. The injectable request keeps offline checks off the network. */
+export async function refreshTrials(products: TrialProduct[], options: RefreshOptions) {
+  const out = options.directory;
+  const ONLY = options.only;
+  const request = options.request ?? fetchJson;
+  const pause = options.pause ?? sleep;
+  mkdirSync(out, { recursive: true });
+  const drugs = products.filter((d) => !ONLY || d.id === ONLY);
   const index: Record<string, IndexEntry> = {};
   const indexPath = join(out, "index.json");
-  if (ONLY && existsSync(indexPath)) { try { Object.assign(index, JSON.parse(readFileSync(indexPath, "utf8"))); } catch { /* fresh */ } }
+  // Failed requests keep their last successful counts and fetched date, just as their per-product
+  // snapshot is kept below. Starting from an empty index made a temporary outage erase coverage.
+  if (existsSync(indexPath)) { try { Object.assign(index, JSON.parse(readFileSync(indexPath, "utf8"))); } catch { /* fresh */ } }
+  if (!ONLY) {
+    const currentIds = new Set(products.map((d) => d.id));
+    for (const id of Object.keys(index)) if (!currentIds.has(id)) delete index[id];
+  }
   const fetched = new Date().toISOString().slice(0, 10);
   const changesPath = join(out, "changes.json");
   const prevChanges = readPrev(changesPath) as unknown as TrialChanges | null;
@@ -101,8 +112,8 @@ async function main() {
       countTotal: "true",
     });
     const url = `https://clinicaltrials.gov/api/v2/studies?${params}`;
-    const json = (await fetchJson(url)) as { totalCount?: number; studies?: Array<{ protocolSection?: Record<string, Record<string, unknown>>; hasResults?: boolean }> } | null;
-    await sleep(350);
+    const json = (await request(url)) as { totalCount?: number; studies?: Array<{ protocolSection?: Record<string, Record<string, unknown>>; hasResults?: boolean }> } | null;
+    await pause(350);
     if (!json) { skipped++; continue; }
     const studies: Study[] = (json.studies ?? []).map((s) => {
       const p = s.protocolSection ?? {};
@@ -147,4 +158,9 @@ async function main() {
   console.log(`trials: ${ok} products written, ${skipped} skipped, ${detected} changes detected (${merged.length} kept), to public/trials/`);
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+if (process.argv[1]?.endsWith("fetch-trials.ts")) {
+  refreshTrials(graph().kind("drug"), {
+    directory: join(process.cwd(), "public", "trials"),
+    only: process.argv.find((a) => a.startsWith("--only="))?.slice(7),
+  }).catch((e) => { console.error(e); process.exit(1); });
+}
