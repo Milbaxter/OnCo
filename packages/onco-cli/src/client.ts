@@ -195,7 +195,15 @@ export class OncoClient {
       index,
       lexical: (text, k) => ms.search(text).slice(0, k).map((h) => String(h.id)),
       concept: (text, k) => (sem ? semanticSearch(sem, text, k).map((h) => h.id) : []),
-      load: async (id) => { try { return (await this.entity(id)) as unknown as AskEntityRecord; } catch { return null; } },
+      load: async (id) => {
+        try { return (await this.entity(id)) as unknown as AskEntityRecord; }
+        catch (err) {
+          // A stale index can name a removed record. Outages and invalid responses are different:
+          // propagate them so CLI/MCP report a failure instead of claiming the corpus has no answer.
+          if (err instanceof OncoError && err.code === "not-found") return null;
+          throw err;
+        }
+      },
       region: opts.region, pin: opts.pin, onStep: opts.onStep,
     });
   }
