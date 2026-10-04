@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ATTRIBUTION } from "./client";
 import { run } from "./onco";
 import { writeFixture } from "./test-fixture";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 let api = "";
 let cleanup = async () => {};
@@ -88,5 +90,17 @@ describe("onco CLI against a local API copy", () => {
     expect(missing.err).toContain('No record with id "nope"');
     expect((await cli("list", "widgets")).code).toBe(2);
     expect((await cli("frobnicate")).code).toBe(2);
+  });
+
+  it("ask exits 1 with no answer on stdout when a record is corrupt", async () => {
+    const f = await writeFixture();
+    try {
+      await writeFile(join(f.dir, "entities/sacituzumab-govitecan.json"), "{broken");
+      const out: string[] = [], err: string[] = [];
+      const code = await run(["ask", "What is sacituzumab govitecan?", "--json"], { out: (s) => out.push(s), err: (s) => err.push(s) }, { ONCO_API: f.dir });
+      expect(code).toBe(1);
+      expect(out).toEqual([]);
+      expect(err.join("\n")).toContain("entities/sacituzumab-govitecan.json is not valid JSON");
+    } finally { await f.cleanup(); }
   });
 });

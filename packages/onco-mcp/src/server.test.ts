@@ -4,6 +4,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ATTRIBUTION, OncoClient } from "../../onco-cli/src/client";
 import { writeFixture } from "../../onco-cli/src/test-fixture";
 import { compareRecords, createServer } from "./server";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 let cleanup = async () => {};
 let mcp: Client;
@@ -86,5 +88,21 @@ describe("onco-mcp", () => {
     expect(body).toContain('get_entity("tnbc")');
     expect(body).toContain("oncologist");
     expect(body).toContain(ATTRIBUTION);
+  });
+
+  it("ask returns an attributed isError result when a record is corrupt", async () => {
+    const f = await writeFixture();
+    const connection = new Client({ name: "failure-test", version: "0" });
+    const server = createServer(new OncoClient({ base: f.dir, local: true }));
+    try {
+      await writeFile(join(f.dir, "entities/sacituzumab-govitecan.json"), "{broken");
+      const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+      await Promise.all([server.connect(serverSide), connection.connect(clientSide)]);
+      const r = await connection.callTool({ name: "ask", arguments: { question: "What is sacituzumab govitecan?" } });
+      expect(r.isError).toBe(true);
+      expect(json(r).error).toContain("entities/sacituzumab-govitecan.json is not valid JSON");
+      expect(json(r).attribution).toBe(ATTRIBUTION);
+      expect(json(r)).not.toHaveProperty("answer");
+    } finally { await connection.close(); await server.close(); await f.cleanup(); }
   });
 });

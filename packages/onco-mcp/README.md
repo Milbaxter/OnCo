@@ -51,6 +51,8 @@ To point at another copy of the API (a mirror, or a local `out/api/v1` after bui
 
 Errors (unknown id, unreachable API) come back as `isError` results with an `error` message and the attribution, never as crashes.
 
+The `ask` tool also returns `isError` if reading any of its records fails because of a connection failure, an HTTP error other than 404, or invalid JSON. It does not return an answer assembled from the remaining records in that case. Missing records (404 or missing local files) can still be omitted. Failed reads are not cached, so a later call can retry after the API recovers.
+
 ## Resources
 
 - `onco://kinds`: the eighteen kinds with counts, routes and one-line descriptions.

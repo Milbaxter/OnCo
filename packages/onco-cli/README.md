@@ -38,6 +38,8 @@ Human output ends with the line `Data from OnCo (onco.cc), CC BY-NC 4.0; commerc
 
 Ask OnCo answers end with "OnCo is an orientation tool, not medical advice." Keep that line when you pass an answer on.
 
+If Ask cannot read a record because of a connection failure, an HTTP error other than 404, or invalid JSON, it exits 1 and reports the error on stderr without printing an answer. A missing record (404 or a missing local file) can still be omitted from the answer. Failed reads can be retried; they are not retained in the process cache.
+
 ## Another copy of the API
 
 `ONCO_API` (or `--api`) points the tool at any copy of `/api/v1`: a mirror, or a local directory such as `out/api/v1` after building the site, which works offline.
