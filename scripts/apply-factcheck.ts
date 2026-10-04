@@ -18,6 +18,7 @@
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { Patch, PatchFile } from "./factcheck";
+import ts from "typescript";
 
 const root = process.cwd();
 
@@ -32,57 +33,69 @@ export function dataFiles(dir = join(root, "src", "data")): string[] {
   return out;
 }
 
-/** Find the record with this id: the index range of its outer braces, or null. */
+/** Named, direct properties only: nested objects, comments and string contents are not fields. */
+function propertyName(property: ts.ObjectLiteralElementLike): string | undefined {
+  const name = property.name;
+  return name && (ts.isIdentifier(name) || ts.isStringLiteral(name)) ? name.text : undefined;
+}
+
+function parsedRecord(source: string, id: string): { file: ts.SourceFile; record: ts.ObjectLiteralExpression } | null {
+  const file = ts.createSourceFile("data.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const records: ts.ObjectLiteralExpression[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isObjectLiteralExpression(node)) {
+      const ids = node.properties.filter((p) => propertyName(p) === "id");
+      const ownId = ids[0];
+      if (ids.length === 1 && ts.isPropertyAssignment(ownId) && ts.isStringLiteral(ownId.initializer)
+        && ownId.initializer.text === id && node.properties.some((p) => ["name", "kind"].includes(propertyName(p) ?? ""))) records.push(node);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  // Ambiguous identities need a human; never silently edit the first of two copies.
+  return records.length === 1 ? { file, record: records[0] } : null;
+}
+
+/** Find an unambiguous record by its own literal id, independent of formatting. */
 export function findRecord(source: string, id: string): { start: number; end: number } | null {
-  const re = new RegExp(`\\bid: "${id.replace(/[-]/g, "\\-")}"`, "g");
-  for (const m of source.matchAll(re)) {
-    const lineStart = source.lastIndexOf("\n", m.index) + 1;
-    const lineEnd = source.indexOf("\n", m.index);
-    const line = source.slice(lineStart, lineEnd < 0 ? source.length : lineEnd);
-    if (!/\b(kind|name):/.test(line)) continue;
-    let depth = 0, j = m.index - 1, open = -1;
-    while (j >= 0) {
-      const c = source[j];
-      if (c === "}" || c === "]" || c === ")") depth++;
-      else if (c === "{") { if (depth === 0) { open = j; break; } depth--; }
-      else if (c === "[" || c === "(") { if (depth === 0) break; depth--; }
-      j--;
-    }
-    if (open < 0) continue;
-    let k = open + 1; depth = 0;
-    while (k < source.length) {
-      const c = source[k];
-      if (c === '"' || c === "'" || c === "`") { const q = c; k++; while (k < source.length && source[k] !== q) { if (source[k] === "\\") k++; k++; } k++; continue; }
-      if (c === "{" || c === "[" || c === "(") depth++;
-      else if (c === "}" || c === "]" || c === ")") { if (depth === 0) break; depth--; }
-      k++;
-    }
-    return { start: open, end: k + 1 };
-  }
-  return null;
+  const parsed = parsedRecord(source, id);
+  return parsed ? { start: parsed.record.getStart(parsed.file), end: parsed.record.end } : null;
 }
 
 export type ApplyResult = { applied: boolean; source: string; reason?: string };
 
-/** Replace `field: "<current>"` with `field: "<proposed>"` inside the record, and bump an inline `asOf`. */
+/** Replace only a direct literal field and inline date, leaving all other source bytes untouched. */
 export function applyPatchToSource(source: string, patch: Pick<Patch, "id" | "field" | "current" | "proposed">, today: string): ApplyResult {
-  const range = findRecord(source, patch.id);
-  if (!range) return { applied: false, source, reason: "record not found in this file" };
-  let record = source.slice(range.start, range.end);
-  // Most fields are quoted strings (phase "3" included); a bare number (enrolled: 405) is matched when no quoted form is present.
-  const esc = patch.current.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const quotedRe = new RegExp(`(\\b${patch.field}:\\s*)"${esc}"`);
-  const bareRe = new RegExp(`(\\b${patch.field}:\\s*)${esc}(?=[,\\s}])`);
-  const q = quotedRe.test(record) ? '"' : /^\d+$/.test(patch.current) && /^\d+$/.test(patch.proposed) && bareRe.test(record) ? "" : null;
-  const fieldRe = q === '"' ? quotedRe : bareRe;
-  if (q === null) {
-    const anyValue = new RegExp(`\\b${patch.field}:\\s*(?:"([^"]*)"|(\\d+))`).exec(record);
-    const found = anyValue?.[1] ?? anyValue?.[2];
-    return { applied: false, source, reason: found !== undefined ? `field is "${found}", not "${patch.current}"; re-run the fact check` : `field ${patch.field} is not written inline on this record (set by a helper or spread); edit by hand` };
+  const parsed = parsedRecord(source, patch.id);
+  if (!parsed) return { applied: false, source, reason: "record not found in this file or id is ambiguous" };
+  const { file, record } = parsed;
+  const direct = (name: string) => record.properties.filter((p) => propertyName(p) === name);
+  const field = direct(patch.field);
+  const property = field[0];
+  if (field.length !== 1 || !ts.isPropertyAssignment(property)) {
+    return { applied: false, source, reason: `field ${patch.field} is not written inline unambiguously on this record (set by a helper or spread); edit by hand` };
   }
-  record = record.replace(fieldRe, `$1${q}${patch.proposed}${q}`);
-  record = record.replace(/(\basOf:\s*)"\d{4}-\d{2}-\d{2}"/, `$1"${today}"`);
-  return { applied: true, source: source.slice(0, range.start) + record + source.slice(range.end) };
+  // A later spread or computed key can replace the selected field or even the record's identity.
+  const identity = direct("id")[0];
+  if (record.properties.some((p) => p.pos > Math.min(identity.pos, property.pos)
+    && (ts.isSpreadAssignment(p) || (p.name && ts.isComputedPropertyName(p.name))))) {
+    return { applied: false, source, reason: "a spread or computed field may override the record id or patched field; edit by hand" };
+  }
+  const value = property.initializer;
+  const isString = ts.isStringLiteral(value);
+  const isNumber = ts.isNumericLiteral(value);
+  if (!isString && !isNumber) return { applied: false, source, reason: `field ${patch.field} is not written inline as a literal; edit by hand` };
+  if (value.text !== patch.current) return { applied: false, source, reason: `field is "${value.text}", not "${patch.current}"; re-run the fact check` };
+  if (isNumber && !/^\d+$/.test(patch.proposed)) return { applied: false, source, reason: "proposed numeric value is invalid" };
+  const edits = [{ start: value.getStart(file), end: value.end, value: isString ? JSON.stringify(patch.proposed) : patch.proposed }];
+  const dates = direct("asOf");
+  const date = dates[0];
+  if (dates.length === 1 && ts.isPropertyAssignment(date) && ts.isStringLiteral(date.initializer)
+    && /^\d{4}-\d{2}-\d{2}$/.test(date.initializer.text)) {
+    edits.push({ start: date.initializer.getStart(file), end: date.initializer.end, value: JSON.stringify(today) });
+  }
+  for (const edit of edits.sort((a, b) => b.start - a.start)) source = source.slice(0, edit.start) + edit.value + source.slice(edit.end);
+  return { applied: true, source };
 }
 
 /** Append a row to CORRECTIONS.md under today's heading (creating the heading if needed), keeping newest first. */
@@ -127,7 +140,7 @@ function main() {
     let done = false;
     for (const f of files) {
       const src = sources.get(f)!;
-      if (!src.includes(`id: "${p.id}"`)) continue;
+      if (!src.includes(p.id)) continue;
       const r = applyPatchToSource(src, p, today);
       if (r.applied) { sources.set(f, r.source); console.log(`applied ${p.id}.${p.field}: "${p.current}" -> "${p.proposed}" in ${relative(root, f)}`); done = true; break; }
       if (r.reason && !r.reason.startsWith("record not found")) console.warn(`skipped ${p.id}.${p.field}: ${r.reason} (${relative(root, f)})`);

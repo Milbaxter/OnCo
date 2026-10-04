@@ -42,6 +42,61 @@ describe("record location and field parsing", () => {
 });
 
 describe("applying fact-check patches", () => {
+  it("only changes the record's own fields, never nested values or quoted examples", () => {
+    const source = `export const trials = [
+      { id: "alpha", name: "Alpha", notes: 'status: "recruiting"',
+        history: [{ status: "recruiting", asOf: "2020-01-01" }],
+        status: "recruiting", asOf: "2026-01-01" }
+    ];`;
+    const result = applyPatchToSource(source, { id: "alpha", field: "status", current: "recruiting", proposed: "completed" }, "2026-10-05");
+    expect(result.applied).toBe(true);
+    expect(result.source).toBe(source.replace('status: "recruiting", asOf: "2026-01-01"', 'status: "completed", asOf: "2026-10-05"'));
+  });
+
+  it("refuses a nested field when the record gets its own field from a helper", () => {
+    const source = `t({ id: "alpha", name: "Alpha", history: [{ status: "recruiting" }] })`;
+    const result = applyPatchToSource(source, { id: "alpha", field: "status", current: "recruiting", proposed: "completed" }, "2026-10-05");
+    expect(result.applied).toBe(false);
+    expect(result.source).toBe(source);
+  });
+
+  it("finds multiline records and ignores fake records in comments", () => {
+    const source = `// { id: "alpha", name: "Fake", status: "recruiting" }
+      t({
+        id: 'alpha',
+        name: "Alpha",
+        status: 'recruiting',
+        enrolled: 20,
+      })`;
+    const result = applyPatchToSource(source, { id: "alpha", field: "enrolled", current: "20", proposed: "24" }, "2026-10-05");
+    expect(result.applied).toBe(true);
+    expect(result.source).toBe(source.replace("enrolled: 20", "enrolled: 24"));
+  });
+
+  it("refuses a field that a later spread could override", () => {
+    const source = `t({ id: "alpha", name: "Alpha", status: "recruiting", ...overrides })`;
+    const result = applyPatchToSource(source, { id: "alpha", field: "status", current: "recruiting", proposed: "completed" }, "2026-10-05");
+    expect(result.applied).toBe(false);
+    expect(result.source).toBe(source);
+  });
+
+  it("does not accept an old nested value when the own field has changed", () => {
+    const source = `t({ id: "alpha", name: "Alpha", history: [{ status: "recruiting" }], status: "positive" })`;
+    const result = applyPatchToSource(source, { id: "alpha", field: "status", current: "recruiting", proposed: "completed" }, "2026-10-05");
+    expect(result.applied).toBe(false);
+    expect(result.source).toBe(source);
+    expect(result.reason).toContain('field is "positive"');
+  });
+
+  it("refuses duplicate record ids and duplicate own fields", () => {
+    const record = `t({ id: "alpha", name: "Alpha", status: "recruiting" })`;
+    for (const source of [`[${record}, ${record}]`, record.replace('status: "recruiting"', 'status: "recruiting", status: "positive"')]) {
+      const result = applyPatchToSource(source, { id: "alpha", field: "status", current: "recruiting", proposed: "completed" }, "2026-10-05");
+      expect(result.applied).toBe(false);
+      expect(result.source).toBe(source);
+    }
+  });
+
   it("replaces the field inside the right record and bumps its asOf", () => {
     const r = applyPatchToSource(SRC, { id: "alpha-1", field: "status", current: "recruiting", proposed: "completed" }, "2026-09-09");
     expect(r.applied).toBe(true);
