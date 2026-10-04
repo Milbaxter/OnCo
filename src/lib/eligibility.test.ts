@@ -89,6 +89,89 @@ describe("profile helpers", () => {
   });
 });
 
+describe("biomarker polarity belongs to its own marker", () => {
+  const labels = {
+    mixed: "HR-positive, HER2-negative",
+    hr: "HR-positive",
+    low: "HER2-low (IHC 1+ or 2+/ISH−)",
+  };
+
+  it.each([
+    "HR-positive, HER2-negative breast cancer.",
+    "HER2-negative and HR-positive breast cancer.",
+    "HR-positive HER2-negative breast cancer.",
+    // ClinicalTrials.gov NCT05514054, inclusion criteria (retrieved 5 October 2026).
+    "Have a diagnosis of ER+, HER2- early-stage, resected, invasive breast cancer without evidence of distant metastasis.",
+  ])("keeps mixed positive and negative requirements separate: %s", (text) => {
+    const tags = tagCriterion(text, "inclusion");
+    expect(tags.biomarkers).toEqual(["HR-positive"]);
+    expect(tags.biomarkersExcluded).toEqual(["HER2"]);
+  });
+
+  it("does not interpret exclusion of a negative result as exclusion of a positive result", () => {
+    const tags = tagCriterion("HER2-negative disease.", "exclusion");
+    expect(tags.biomarkers).toEqual(["HER2"]);
+    expect(tags.biomarkersExcluded).toBeUndefined();
+  });
+
+  it("keeps a negative fusion result separate from another positive marker", () => {
+    const tags = tagCriterion("ALK fusion-negative and HER2-positive disease.", "inclusion");
+    expect(tags.biomarkers).toEqual(["HER2"]);
+    expect(tags.biomarkersExcluded).toEqual(["ALK"]);
+  });
+
+  it("reads each result in a mixed profile label independently", () => {
+    const bm = profileBiomarkers(["mixed"], labels);
+    expect([...bm.present]).toEqual(["HR-positive"]);
+    expect([...bm.absent]).toEqual(["HER2"]);
+  });
+
+  it("does not turn HER2-low into HER2-positive because another marker is positive", () => {
+    const bm = profileBiomarkers(["low", "hr"], labels);
+    expect(bm.present.has("HER2-low")).toBe(true);
+    expect(bm.present.has("HER2")).toBe(false);
+    expect(bm.absent.has("HER2")).toBe(true);
+  });
+
+  it("does not reject a profile that meets both receptor requirements", () => {
+    const result = score(parseCriteria("Inclusion Criteria:\n* HR-positive, HER2-negative breast cancer."),
+      { stage: "unknown", biomarkers: ["mixed"], priorLines: [] },
+      { biomarkerLabels: labels, drugNames: {} });
+    expect(result.verdict).toBe("likely");
+    expect(result.checklist[0].status).toBe("met");
+  });
+
+  it.each([
+    "HER2-positive or HER2-negative disease.",
+    "EGFR-mutated or ALK-positive disease.",
+  ])("leaves alternative biomarker requirements for the trial team: %s", (text) => {
+    const criteria = parseCriteria(`Inclusion Criteria:\n* ${text}\n* HR-positive disease.`);
+    const result = score(criteria, { stage: "unknown", biomarkers: ["mixed"], priorLines: [] },
+      { biomarkerLabels: labels, drugNames: {} });
+    expect(criteria[0].tags.biomarkers).toBeUndefined();
+    expect(criteria[0].tags.biomarkersExcluded).toBeUndefined();
+    expect(result.checklist[0].status).toBe("unknown");
+    expect(result.verdict).toBe("unclear");
+  });
+
+  it("does not treat alternative results in a profile label as confirmed results", () => {
+    const bm = profileBiomarkers(["alternative"], { alternative: "HER2-positive or HER2-negative" });
+    expect(bm.present.size).toBe(0);
+    expect(bm.absent.size).toBe(0);
+  });
+
+  it.each([
+    "HR-positive and HER2-negative breast cancer.",
+    "HR-positive, HER2-negative breast cancer.",
+  ])("does not negate a combined exclusion one marker at a time: %s", (text) => {
+    const result = score(parseCriteria(`Exclusion Criteria:\n* ${text}`),
+      { stage: "unknown", biomarkers: ["tnbc"], priorLines: [] },
+      { biomarkerLabels: { tnbc: "Triple-negative" }, drugNames: {} });
+    expect(result.verdict).toBe("unclear");
+    expect(result.checklist[0].status).toBe("unknown");
+  });
+});
+
 describe("score", () => {
   const cs = parseCriteria(TEXT);
   const ctx = { biomarkerLabels: LABELS, drugNames: NAMES };
