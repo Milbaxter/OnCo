@@ -170,10 +170,12 @@ export class OncoClient {
     const q = query.trim();
     if (!q) throw new OncoError("A query is required", "usage");
     const [{ ms, byId }, sem] = await Promise.all([this.lexicalIndex(), this.semanticIndex()]);
-    // With a kind filter, retrieve deeper so that a narrow kind still fills the page.
+    // Apply the kind restriction before each retrieval window. A fixed over-fetch cannot guarantee
+    // recall: a common topic can have hundreds of trials ranked before its first matching drug.
     const want = opts.kind ? Math.max(limit * 6, 60) : Math.max(limit, 12);
-    const lexical = ms.search(q).slice(0, want).map((h) => ({ id: String(h.id) }));
-    const concept = sem ? semanticSearch(sem, q, want) : [];
+    const eligible = (hit: { id: string | number }) => !opts.kind || byId.get(String(hit.id))?.kind === opts.kind;
+    const lexical = ms.search(q).filter(eligible).slice(0, want).map((h) => ({ id: String(h.id) }));
+    const concept = sem ? semanticSearch(sem, q, opts.kind ? sem.ids.length : want).filter(eligible).slice(0, want) : [];
     const conceptById = new Map(concept.map((h) => [h.id, h.matched.slice(0, 4)]));
     const lexIds = new Set(lexical.map((h) => h.id));
     const hits: SearchHit[] = [];
