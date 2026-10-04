@@ -97,6 +97,37 @@ describe("biomarker readouts", () => {
     if (cps?.kind === "biomarker") for (const t of trialsNaming(cps)) expect(/PD-L1|CPS|combined positive/i.test(`${t.name} ${t.setting} ${t.tldr} ${t.summary}`)).toBe(true);
   });
 
+  it("does not reduce a HER2 mutation readout to the generic HER2 gene name", () => {
+    const bm = g.must("her2-mutation");
+    expect(bm.kind).toBe("biomarker");
+    if (bm.kind !== "biomarker") return;
+    const matches = trialsNaming(bm, Infinity).map((t) => t.id);
+    // BWEL names HER2-negative breast cancer, not a HER2 activating mutation.
+    expect(matches).not.toContain("bwel");
+    expect(matches).toEqual(expect.arrayContaining(["destiny-lung01", "destiny-lung02", "beamion-lung-1", "soho-01"]));
+  });
+
+  it("does not reduce a tumour BRCA readout to the word tumour", () => {
+    const bm = g.must("brca-somatic");
+    expect(bm.kind).toBe("biomarker");
+    if (bm.kind !== "biomarker") return;
+    const matches = trialsNaming(bm, Infinity).map((t) => t.id);
+    // STAR-TREC discusses shrinking a rectal tumour without naming a BRCA or HRR readout.
+    expect(matches).not.toContain("star-trec");
+    expect(matches).not.toContain("add-aspirin");
+    expect(matches).toEqual(expect.arrayContaining(["polo", "olympia", "solo-1"]));
+  });
+
+  it.each([
+    { id: "folr1-expression", trialIds: ["mirasol", "soraya"] },
+    { id: "her2-low-ihc", trialIds: ["destiny-breast04"] },
+  ])("keeps the short name before a terminal annotation for $id", ({ id, trialIds }) => {
+    const bm = g.must(id);
+    expect(bm.kind).toBe("biomarker");
+    if (bm.kind !== "biomarker") return;
+    expect(trialsNaming(bm, Infinity).map((t) => t.id)).toEqual(expect.arrayContaining(trialIds));
+  });
+
   it("every measurement has pill metadata and the skip list explains itself", () => {
     for (const m of MEASUREMENTS) { expect(MEASUREMENT_META[m].glyph.length).toBeGreaterThan(0); expect(MEASUREMENT_META[m].tip.length).toBeGreaterThan(20); }
     for (const s of BIOMARKER_SKIPS) expect(s.reason.length).toBeGreaterThan(30);

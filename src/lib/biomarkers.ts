@@ -78,7 +78,10 @@ const MIN_ALIAS = 5;
  * which are specific enough on their own.
  */
 export function trialsNaming(bm: Biomarker, limit = 40): Trial[] {
-  const names = [bm.name.replace(/\s*\(.*$/, ""), ...bm.aka].filter((a) => a.length >= MIN_ALIAS || /[\d≥>=+]/.test(a));
+  // An internal parenthesis can precede the defining qualifier: "HER2 (ERBB2) activating mutation".
+  // Only omit a final explanatory annotation, keeping useful short names such as "HER2-low".
+  const shortName = bm.name.replace(/\s+\([^()]*\)\s*$/, "");
+  const names = [bm.name, shortName, ...bm.aka].filter((a) => a.length >= MIN_ALIAS || /[\d≥>=+]/.test(a));
   if (!names.length) return [];
   const re = new RegExp(`(^|[^A-Za-z0-9])(${names.map(esc).join("|")})(?=$|[^A-Za-z0-9])`, "i");
   const out: Trial[] = [];
