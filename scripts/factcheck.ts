@@ -22,7 +22,8 @@
  *
  * Writes public/factcheck.json (mismatches, for /audit/) and public/factcheck-patches.json: concrete
  * patch proposals {id, field, current, proposed, source} where the registry value maps unambiguously
- * onto ours. Nothing is applied automatically; a maintainer accepts patches with
+ * onto ours and the study identity is not flagged for review. Nothing is applied automatically;
+ * a maintainer accepts patches with
  * `npx tsx scripts/apply-factcheck.ts <id>[.<field>] ...` (or --all), which edits the data file and
  * appends a CORRECTIONS.md line.
  *
@@ -161,6 +162,62 @@ export function firstApprovalYear(results: DrugsFdaApp[]): number | null {
 /** Is an openFDA generic name ours, or ours with a four-letter biologic suffix? */
 const isOurName = (n: string, ql: string) => { const l = n.toLowerCase(); return l === ql || l.startsWith(`${ql}-`) || l.replace(/-[a-z]{4}$/, "") === ql; };
 
+export type TrialProtocol = { identificationModule?: { briefTitle?: string; officialTitle?: string; acronym?: string; orgStudyIdInfo?: { id?: string }; secondaryIdInfos?: Array<{ id?: string }> }; statusModule?: { overallStatus?: string; whyStopped?: string; primaryCompletionDateStruct?: { date?: string; type?: string }; completionDateStruct?: { date?: string; type?: string } }; designModule?: { phases?: string[]; enrollmentInfo?: { count?: number; type?: string } } };
+
+/** Check a single registry response; network and corpus lookup stay in the caller. */
+export function checkRegistryTrial(t: Trial, ps: TrialProtocol | undefined, extra: string[], today: string): { mismatches: Mismatch[]; patches: Patch[] } {
+  const registryUrl = `https://clinicaltrials.gov/study/${t.nct}`;
+  const mismatches: Mismatch[] = [];
+  const patches: Patch[] = [];
+
+  const im = ps?.identificationModule ?? {};
+  // Acronym, titles and the sponsor's own protocol ids (COG "ACNS0331", "RTOG 0129", "ISG-STS 1001"), which the titles often omit.
+  const titles = [im.acronym ?? "", im.briefTitle ?? "", im.officialTitle ?? "", im.orgStudyIdInfo?.id ?? "", ...(im.secondaryIdInfos ?? []).map((s) => s.id ?? "")];
+  const hasIdentity = titles.some((title) => compact(title).length > 0);
+  if (!hasIdentity || !nameMatchesRegistry(t.name, titles, extra)) {
+    mismatches.push({ check: "nct-title-mismatch", id: t.id, name: t.name, route: routeFor(t), recorded: `${t.nct}: "${t.name}"`, registry: hasIdentity ? `${im.acronym ? `${im.acronym}: ` : ""}${(im.briefTitle ?? im.officialTitle ?? "").slice(0, 120)}` : "registry returned no study title or identifier", url: registryUrl, severity: "medium" });
+    // The registry may describe another study. Keep the identity warning for a person to resolve,
+    // but do not offer its phase, enrolment or status as corrections to this record (including --all).
+    // Missing acronyms can also cause this warning; withholding a patch is not a claim the id is wrong.
+    return { mismatches, patches };
+  }
+
+  const status = ps?.statusModule?.overallStatus ?? "UNKNOWN";
+  const ok = [...(CT_TO_OURS[status] ?? [])];
+  // A trial the registry calls TERMINATED because an interim analysis met its endpoint is a positive trial stopped early.
+  if (status === "TERMINATED" && /efficacy|benefit|superior|met its|primary endpoint|early for|positive/i.test(ps?.statusModule?.whyStopped ?? "")) ok.push("positive");
+  if (t.status && ok.length && !ok.includes(t.status)) {
+    mismatches.push({ check: "trial-status-vs-registry", id: t.id, name: t.name, route: routeFor(t), recorded: t.status, registry: status, url: registryUrl, severity: status === "WITHDRAWN" || status === "TERMINATED" ? "high" : "medium" });
+  }
+  const proposed = proposeStatus(t.status, status);
+  if (proposed && proposed !== t.status) patches.push({ id: t.id, kind: "trial", name: t.name, route: routeFor(t), field: "status", current: t.status!, proposed, reason: `ClinicalTrials.gov overall status is ${status}${ps?.statusModule?.whyStopped ? ` (${ps.statusModule.whyStopped.slice(0, 100)})` : ""}`, source: registryUrl, registryValue: status, proposedOn: today });
+
+  const regPhase = phaseFromRegistry(ps?.designModule?.phases);
+  if (regPhase && regPhase !== t.phase && t.phase !== "platform" && t.phase !== "observational") {
+    mismatches.push({ check: "trial-phase-vs-registry", id: t.id, name: t.name, route: routeFor(t), recorded: `phase ${t.phase}`, registry: (ps?.designModule?.phases ?? []).join("/"), url: registryUrl, severity: "medium" });
+    patches.push({ id: t.id, kind: "trial", name: t.name, route: routeFor(t), field: "phase", current: t.phase, proposed: regPhase, reason: `ClinicalTrials.gov lists phases ${(ps?.designModule?.phases ?? []).join(", ")}`, source: registryUrl, registryValue: (ps?.designModule?.phases ?? []).join("/"), proposedOn: today });
+  }
+
+  const pc = ps?.statusModule?.primaryCompletionDateStruct;
+  if (pc?.date && pc.type === "ACTUAL" && pc.date < today && (t.status === "recruiting" || t.status === "planned")) {
+    mismatches.push({ check: "primary-completion-passed", id: t.id, name: t.name, route: routeFor(t), recorded: t.status, registry: `primary completion ${pc.date} (actual)`, url: registryUrl, severity: "medium" });
+    if (!patches.some((p) => p.id === t.id && p.field === "status")) patches.push({ id: t.id, kind: "trial", name: t.name, route: routeFor(t), field: "status", current: t.status!, proposed: status === "COMPLETED" ? "completed" : "active", reason: `Primary completion date ${pc.date} has passed (actual) and the registry status is ${status}`, source: registryUrl, registryValue: `${status}; primary completion ${pc.date}`, proposedOn: today });
+  }
+
+  // Enrolment: the registry's actual count is the primary source for `enrolled`. An estimate is only worth a note when far off.
+  const en = ps?.designModule?.enrollmentInfo;
+  if (en?.count && t.enrolled !== undefined && en.count !== t.enrolled) {
+    const rel = Math.abs(en.count - t.enrolled) / Math.max(en.count, t.enrolled);
+    if (en.type === "ACTUAL") {
+      mismatches.push({ check: "enrolled-vs-registry", id: t.id, name: t.name, route: routeFor(t), recorded: `enrolled ${t.enrolled}`, registry: `enrolment ${en.count} (actual)`, url: registryUrl, severity: rel > 0.1 ? "medium" : "low" });
+      patches.push({ id: t.id, kind: "trial", name: t.name, route: routeFor(t), field: "enrolled", current: String(t.enrolled), proposed: String(en.count), reason: `ClinicalTrials.gov actual enrolment is ${en.count}`, source: registryUrl, registryValue: `${en.count} (ACTUAL)`, proposedOn: today });
+    } else if (rel > 0.25) {
+      mismatches.push({ check: "enrolled-vs-registry", id: t.id, name: t.name, route: routeFor(t), recorded: `enrolled ${t.enrolled}`, registry: `enrolment ${en.count} (estimated)`, url: registryUrl, severity: "low" });
+    }
+  }
+  return { mismatches, patches };
+}
+
 async function main() {
   const g = graph();
   const report: Report = { generated: new Date().toISOString(), checked: { drugs: 0, trials: 0 }, mismatches: [], errors: [] };
@@ -228,48 +285,10 @@ async function main() {
     const registryUrl = `https://clinicaltrials.gov/study/${t.nct}`;
     if (res === null) { report.errors.push(`CT.gov error for ${t.id}`); continue; }
     if (res === "404") { report.mismatches.push({ check: "nct-not-found", id: t.id, name: t.name, route: routeFor(t), recorded: t.nct!, registry: "not found", url: registryUrl, severity: "high" }); continue; }
-    type PS = { identificationModule?: { briefTitle?: string; officialTitle?: string; acronym?: string; orgStudyIdInfo?: { id?: string }; secondaryIdInfos?: Array<{ id?: string }> }; statusModule?: { overallStatus?: string; whyStopped?: string; primaryCompletionDateStruct?: { date?: string; type?: string }; completionDateStruct?: { date?: string; type?: string } }; designModule?: { phases?: string[]; enrollmentInfo?: { count?: number; type?: string } } };
-    const ps = (res as { protocolSection?: PS }).protocolSection;
-
-    const im = ps?.identificationModule ?? {};
-    // Acronym, titles and the sponsor's own protocol ids (COG "ACNS0331", "RTOG 0129", "ISG-STS 1001"), which the titles often omit.
-    const titles = [im.acronym ?? "", im.briefTitle ?? "", im.officialTitle ?? "", im.orgStudyIdInfo?.id ?? "", ...(im.secondaryIdInfos ?? []).map((s) => s.id ?? "")];
     const extra = [...t.aka, ...t.drugs.flatMap((id) => { const d = g.get(id); return d && d.kind === "drug" ? [d.name, d.code ?? "", d.brand ?? "", ...d.aka] : []; })];
-    if (!nameMatchesRegistry(t.name, titles, extra)) report.mismatches.push({ check: "nct-title-mismatch", id: t.id, name: t.name, route: routeFor(t), recorded: `${t.nct}: "${t.name}"`, registry: `${im.acronym ? `${im.acronym}: ` : ""}${(im.briefTitle ?? im.officialTitle ?? "").slice(0, 120)}`, url: registryUrl, severity: "medium" });
-
-    const status = ps?.statusModule?.overallStatus ?? "UNKNOWN";
-    const ok = [...(CT_TO_OURS[status] ?? [])];
-    // A trial the registry calls TERMINATED because an interim analysis met its endpoint is a positive trial stopped early.
-    if (status === "TERMINATED" && /efficacy|benefit|superior|met its|primary endpoint|early for|positive/i.test(ps?.statusModule?.whyStopped ?? "")) ok.push("positive");
-    if (t.status && ok.length && !ok.includes(t.status)) {
-      report.mismatches.push({ check: "trial-status-vs-registry", id: t.id, name: t.name, route: routeFor(t), recorded: t.status, registry: status, url: registryUrl, severity: status === "WITHDRAWN" || status === "TERMINATED" ? "high" : "medium" });
-    }
-    const proposed = proposeStatus(t.status, status);
-    if (proposed && proposed !== t.status) patches.push({ id: t.id, kind: "trial", name: t.name, route: routeFor(t), field: "status", current: t.status!, proposed, reason: `ClinicalTrials.gov overall status is ${status}${ps?.statusModule?.whyStopped ? ` (${ps.statusModule.whyStopped.slice(0, 100)})` : ""}`, source: registryUrl, registryValue: status, proposedOn: today });
-
-    const regPhase = phaseFromRegistry(ps?.designModule?.phases);
-    if (regPhase && regPhase !== t.phase && t.phase !== "platform" && t.phase !== "observational") {
-      report.mismatches.push({ check: "trial-phase-vs-registry", id: t.id, name: t.name, route: routeFor(t), recorded: `phase ${t.phase}`, registry: (ps?.designModule?.phases ?? []).join("/"), url: registryUrl, severity: "medium" });
-      patches.push({ id: t.id, kind: "trial", name: t.name, route: routeFor(t), field: "phase", current: t.phase, proposed: regPhase, reason: `ClinicalTrials.gov lists phases ${(ps?.designModule?.phases ?? []).join(", ")}`, source: registryUrl, registryValue: (ps?.designModule?.phases ?? []).join("/"), proposedOn: today });
-    }
-
-    const pc = ps?.statusModule?.primaryCompletionDateStruct;
-    if (pc?.date && pc.type === "ACTUAL" && pc.date < today && (t.status === "recruiting" || t.status === "planned")) {
-      report.mismatches.push({ check: "primary-completion-passed", id: t.id, name: t.name, route: routeFor(t), recorded: t.status, registry: `primary completion ${pc.date} (actual)`, url: registryUrl, severity: "medium" });
-      if (!patches.some((p) => p.id === t.id && p.field === "status")) patches.push({ id: t.id, kind: "trial", name: t.name, route: routeFor(t), field: "status", current: t.status!, proposed: status === "COMPLETED" ? "completed" : "active", reason: `Primary completion date ${pc.date} has passed (actual) and the registry status is ${status}`, source: registryUrl, registryValue: `${status}; primary completion ${pc.date}`, proposedOn: today });
-    }
-
-    // Enrolment: the registry's actual count is the primary source for `enrolled`. An estimate is only worth a note when far off.
-    const en = ps?.designModule?.enrollmentInfo;
-    if (en?.count && t.enrolled !== undefined && en.count !== t.enrolled) {
-      const rel = Math.abs(en.count - t.enrolled) / Math.max(en.count, t.enrolled);
-      if (en.type === "ACTUAL") {
-        report.mismatches.push({ check: "enrolled-vs-registry", id: t.id, name: t.name, route: routeFor(t), recorded: `enrolled ${t.enrolled}`, registry: `enrolment ${en.count} (actual)`, url: registryUrl, severity: rel > 0.1 ? "medium" : "low" });
-        patches.push({ id: t.id, kind: "trial", name: t.name, route: routeFor(t), field: "enrolled", current: String(t.enrolled), proposed: String(en.count), reason: `ClinicalTrials.gov actual enrolment is ${en.count}`, source: registryUrl, registryValue: `${en.count} (ACTUAL)`, proposedOn: today });
-      } else if (rel > 0.25) {
-        report.mismatches.push({ check: "enrolled-vs-registry", id: t.id, name: t.name, route: routeFor(t), recorded: `enrolled ${t.enrolled}`, registry: `enrolment ${en.count} (estimated)`, url: registryUrl, severity: "low" });
-      }
-    }
+    const checked = checkRegistryTrial(t, (res as { protocolSection?: TrialProtocol }).protocolSection, extra, today);
+    report.mismatches.push(...checked.mismatches);
+    patches.push(...checked.patches);
   }
 
   const out = join(process.cwd(), "public");
