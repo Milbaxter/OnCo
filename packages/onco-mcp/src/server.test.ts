@@ -1,7 +1,7 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { ATTRIBUTION, OncoClient } from "../../onco-cli/src/client";
+import { ATTRIBUTION, OncoClient, type EntityRecord } from "../../onco-cli/src/client";
 import { writeFixture } from "../../onco-cli/src/test-fixture";
 import { compareRecords, createServer } from "./server";
 
@@ -23,6 +23,11 @@ afterAll(async () => { await mcp.close(); await cleanup(); });
 const text = (r: unknown) => (r as { content: Array<{ type: string; text: string }> }).content[0].text;
 const json = (r: unknown) => JSON.parse(text(r)) as Record<string, unknown>;
 const resourceText = (r: { contents: unknown[] }) => (r.contents[0] as { text: string }).text;
+
+const comparisonFixture = (id: string, toxicity: unknown[]): EntityRecord => ({
+  entity: { id, kind: "drug", name: id, tldr: "Comparison test fixture.", summary: "Comparison test fixture.", toxicity },
+  route: `/drugs/${id}/`, neighbours: {},
+});
 
 describe("onco-mcp", () => {
   it("exposes the six tools, the kind resources and the brief prompt", async () => {
@@ -67,6 +72,42 @@ describe("onco-mcp", () => {
     expect((r.sharedNeighbours as Array<{ id: string }>).map((n) => n.id)).toEqual(["tnbc"]);
     const [a, b] = await Promise.all([api.entity("sacituzumab-govitecan"), api.entity("tnbc")]);
     expect(compareRecords(a, b).note).toMatch(/Different kinds/);
+  });
+
+  it("compares every row even when the display summary truncates after six", () => {
+    const common = Array.from({ length: 6 }, (_, i) => ({ event: `Fixture event ${i}`, grade3PlusPct: i }));
+    const a = comparisonFixture("fixture-a", [...common, { event: "Last fixture event", grade3PlusPct: 1 }]);
+    const b = comparisonFixture("fixture-b", [...common, { event: "Last fixture event", grade3PlusPct: 9 }]);
+    const result = compareRecords(a, b);
+    const field = result.fields.find((f) => f.field === "Toxicity");
+    expect(field?.a).toBe(field?.b); // intentionally identical, abbreviated CLI summaries
+    expect(field?.a).toContain("(+1 more)");
+    expect(field?.differs).toBe(true);
+    expect(result.differing).toContain("Toxicity");
+    expect(field).toMatchObject({ values: { a: a.entity.toxicity, b: b.entity.toxicity } });
+  });
+
+  it("does not report object property order alone as a difference", () => {
+    const a = comparisonFixture("fixture-a", [{ event: "Fixture event", grade3PlusPct: 1 }]);
+    const b = comparisonFixture("fixture-b", [{ grade3PlusPct: 1, event: "Fixture event" }]);
+    const result = compareRecords(a, b);
+    expect(result.fields.find((f) => f.field === "Toxicity")?.differs).toBe(false);
+    expect(result.differing).not.toContain("Toxicity");
+  });
+
+  it("exposes the complete differing values through the MCP compare tool", async () => {
+    const common = Array.from({ length: 6 }, (_, i) => ({ event: `Fixture event ${i}`, grade3PlusPct: i }));
+    const a = comparisonFixture("fixture-a", [...common, { event: "Last fixture event", grade3PlusPct: 1 }]);
+    const b = comparisonFixture("fixture-b", [...common, { event: "Last fixture event", grade3PlusPct: 9 }]);
+    const entity = vi.spyOn(api, "entity").mockImplementation(async (id) => id === a.entity.id ? a : b);
+    try {
+      const result = json(await mcp.callTool({ name: "compare", arguments: { a: a.entity.id, b: b.entity.id } }));
+      expect(result.differing).toContain("Toxicity");
+      expect(result.fields).toContainEqual(expect.objectContaining({
+        field: "Toxicity", differs: true, values: { a: a.entity.toxicity, b: b.entity.toxicity },
+      }));
+      expect(result.attribution).toBe(ATTRIBUTION);
+    } finally { entity.mockRestore(); }
   });
 
   it("returns errors as isError results with the attribution, not exceptions", async () => {

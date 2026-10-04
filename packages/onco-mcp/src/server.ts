@@ -10,9 +10,10 @@
  */
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { isDeepStrictEqual } from "node:util";
 import { answerText } from "../../../src/lib/ask";
 import { applyFilters, ATTRIBUTION, KIND_META, KINDS, kindsTable, OncoClient, OncoError, REGIONS, SITE, urlFor, type EntityRecord, type Kind } from "../../onco-cli/src/client";
-import { keyFields } from "../../onco-cli/src/format";
+import { keyFields, keyFieldValues } from "../../onco-cli/src/format";
 
 export const VERSION = process.env.ONCO_PACKAGE_VERSION ?? "0.1.0";
 
@@ -28,8 +29,16 @@ const withUrls = (rec: EntityRecord) => ({ entity: rec.entity, url: SITE + rec.r
 export function compareRecords(a: EntityRecord, b: EntityRecord) {
   const fa = new Map<string, string>([["Status", a.entity.status ?? ""], ["TL;DR", a.entity.tldr], ...keyFields(a.entity)]);
   const fb = new Map<string, string>([["Status", b.entity.status ?? ""], ["TL;DR", b.entity.tldr], ...keyFields(b.entity)]);
+  const rawFields = (r: EntityRecord) => new Map<string, unknown>([["Status", r.entity.status ?? ""], ["TL;DR", r.entity.tldr], ...keyFieldValues(r.entity)]);
+  const va = rawFields(a), vb = rawFields(b);
   const keys = [...new Set([...fa.keys(), ...fb.keys()])];
-  const fields = keys.map((field) => { const x = fa.get(field) ?? null, y = fb.get(field) ?? null; return { field, a: x, b: y, differs: x !== y }; });
+  // CLI summaries truncate arrays and flatten objects. They are useful display text, but equality
+  // must use all source values; include them so an assistant can inspect differences past the preview.
+  const fields = keys.map((field) => ({
+    field, a: fa.get(field) ?? null, b: fb.get(field) ?? null,
+    differs: !isDeepStrictEqual(va.get(field), vb.get(field)),
+    values: { a: va.get(field) ?? null, b: vb.get(field) ?? null },
+  }));
   const ids = (r: EntityRecord) => new Map(Object.values(r.neighbours).flat().map((n) => [n.id, n]));
   const na = ids(a), nb = ids(b);
   const sharedNeighbours = [...na.values()].filter((n) => nb.has(n.id)).map((n) => ({ id: n.id, kind: n.kind, name: n.name, url: SITE + n.route }));
@@ -93,7 +102,7 @@ export function createServer(client: OncoClient): McpServer {
 
   server.registerTool("compare", {
     title: "Compare two records",
-    description: "Two OnCo records side by side (ideally the same kind: two drugs, two trials, two cancers): each field with both values and a differs flag, the list of differing fields, the records they both connect to, and whether they link to each other directly. Use search to find ids first.",
+    description: "Two OnCo records side by side (ideally the same kind: two drugs, two trials, two cancers): each field has display summaries a/b, complete structured values.a/values.b and a differs flag comparing those complete values. Also returns the list of differing fields, the records they both connect to, and whether they link to each other directly. Use search to find ids first.",
     inputSchema: { a: z.string().min(1).describe("First id"), b: z.string().min(1).describe("Second id") },
   }, ({ a, b }) => guard(async () => {
     const [ra, rb] = await Promise.all([client.entity(a), client.entity(b)]);

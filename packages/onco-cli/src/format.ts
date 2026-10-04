@@ -27,13 +27,17 @@ export function formatValue(v: unknown, max = 6): string | undefined {
   return String(v);
 }
 
+/** Complete kind-specific values, with the same labels and field selection as the human view. */
+export function keyFieldValues(e: Entity): Array<[string, unknown]> {
+  return Object.entries(e).filter(([k]) => !BASE_FIELDS.has(k) && !RELATION_FIELDS.has(k)).map(([k, v]) => [humanise(k), v]);
+}
+
 /** Kind-specific fields of a record, in the order the record lists them. */
 export function keyFields(e: Entity): Array<[string, string]> {
   const out: Array<[string, string]> = [];
-  for (const [k, v] of Object.entries(e)) {
-    if (BASE_FIELDS.has(k) || RELATION_FIELDS.has(k)) continue;
+  for (const [label, v] of keyFieldValues(e)) {
     const s = formatValue(v);
-    if (s !== undefined) out.push([humanise(k), s]);
+    if (s !== undefined) out.push([label, s]);
   }
   return out;
 }
