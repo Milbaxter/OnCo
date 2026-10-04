@@ -53,6 +53,15 @@ describe("parseKind and parseId", () => {
     expect(parseId("https://onco.cc/cancers/TNBC/")).toBe("tnbc");
     expect(parseId("/api/v1/context/trop2.md")).toBe("trop2");
   });
+  it.each([
+    "https://onco.cc/cancers/tnbc/#standard-of-care",
+    "https://onco.cc/cancers/tnbc?region=UK#sources",
+    "/cancers/tnbc/?return=/drugs/example/#sources",
+    "/api/v1/entities/tnbc.json?download=1",
+    "https://onco.cc/api/v1/context/tnbc.md#sources",
+  ])("reads the record path from %s without query or fragment text", (input) => {
+    expect(parseId(input)).toBe("tnbc");
+  });
 });
 
 describe("applyFilters", () => {

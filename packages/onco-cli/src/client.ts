@@ -68,7 +68,9 @@ export function parseKind(input: string): Kind | undefined {
 
 /** Accepts an id, a site route ("/drugs/enhertu/"), a full URL or a context path and returns the id. */
 export function parseId(input: string): string {
-  const s = input.trim().replace(/^https?:\/\/[^/]+/i, "").replace(/\.(json|md)$/i, "");
+  // A copied page link may point to a section or carry a region/tracking query. Strip those before
+  // splitting the path: a slash in the query must never become part of the record id.
+  const s = input.trim().split(/[?#]/, 1)[0].replace(/^https?:\/\/[^/]+/i, "").replace(/\.(json|md)$/i, "");
   const parts = s.split("/").filter(Boolean);
   return (parts[parts.length - 1] ?? "").toLowerCase();
 }

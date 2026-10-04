@@ -42,6 +42,15 @@ describe("onco CLI against a local API copy", () => {
     expect(r.err).toBe(ATTRIBUTION);
   });
 
+  it("get and context accept copied page links with queries and section anchors", async () => {
+    const r = await cli("get", "https://onco.cc/cancers/tnbc/?region=UK#sources", "--json");
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.out).entity.id).toBe("tnbc");
+    const context = await cli("context", "https://onco.cc/api/v1/context/tnbc.md?download=1#sources", "--quiet");
+    expect(context.code).toBe(0);
+    expect(context.out.startsWith("# Triple-negative breast cancer")).toBe(true);
+  });
+
   it("list filters and limits", async () => {
     const r = await cli("list", "drugs", "--filter", "status=approved", "--limit", "1", "--json");
     const data = JSON.parse(r.out) as { total: number; shown: number; results: Array<{ id: string }> };
