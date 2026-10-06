@@ -5,6 +5,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { registryDateRange } from "./registry-dates";
 
 export type FeedDef = {
   id: string;
@@ -16,13 +17,13 @@ export type FeedDef = {
   /** Expected refresh interval in days; a snapshot older than twice this is flagged stale. */
   cadenceDays: number;
   source: string;
-  /** Pull the fetched date and a headline count out of the parsed snapshot. */
-  describe: (json: Record<string, unknown>) => { fetched?: string; count?: number; note?: string };
+  /** Pull the oldest fetched date, optional latest date and a headline count from the snapshot. */
+  describe: (json: Record<string, unknown>) => { fetched?: string; fetchedThrough?: string; count?: number; note?: string };
 };
 
 export type FeedStatus = {
   id: string; label: string; path: string; script: string; workflow?: string; source: string; cadenceDays: number;
-  present: boolean; fetched?: string; ageDays?: number; count?: number; note?: string; stale: boolean;
+  present: boolean; fetched?: string; fetchedThrough?: string; ageDays?: number; count?: number; note?: string; stale: boolean;
 };
 
 const str = (v: unknown) => (typeof v === "string" ? v : undefined);
@@ -32,7 +33,14 @@ const len = (v: unknown) => (Array.isArray(v) ? v.length : undefined);
 
 export const FEEDS: FeedDef[] = [
   { id: "trials", label: "ClinicalTrials.gov phase 2/3 counts", path: "trials/index.json", script: "scripts/fetch-trials.ts", workflow: "refresh-trials.yml", cadenceDays: 7, source: "ClinicalTrials.gov API v2",
-    describe: (j) => { const entries = Object.values(j) as Array<{ fetched?: string }>; const fetched = entries.map((e) => e.fetched).filter(Boolean).sort().at(-1); return { fetched, count: entries.length, note: "products with a trial snapshot" }; } },
+    describe: (j) => {
+      const entries = Object.values(j) as Array<{ fetched?: string }>;
+      const dates = registryDateRange(entries.map((e) => ({ fetched: e.fetched ?? "" })));
+      // A retained old or undated snapshot must not look fresh after another product succeeds.
+      return { fetched: entries.every((e) => e.fetched) ? dates.oldest || undefined : undefined,
+        fetchedThrough: dates.newest || undefined, count: entries.length,
+        note: "products with a trial snapshot; age and state use the oldest product snapshot" };
+    } },
   { id: "trial-changes", label: "Trial status changes", path: "trials/changes.json", script: "scripts/fetch-trials.ts", workflow: "refresh-trials.yml", cadenceDays: 7, source: "ClinicalTrials.gov API v2 (diff against previous snapshot)",
     describe: (j) => ({ fetched: str(j.fetched), count: len(j.changes), note: "changes detected in the last 90 days" }) },
   { id: "papers", label: "Literature snapshot", path: "papers/index.json", script: "scripts/fetch-papers.ts", workflow: "refresh-papers.yml", cadenceDays: 7, source: "Europe PMC REST API",
@@ -88,10 +96,10 @@ export function feedStatus(def: FeedDef, now = new Date(), root = process.cwd())
   const json = readPublicJson<Record<string, unknown>>(def.path, root);
   const base = { id: def.id, label: def.label, path: def.path, script: def.script, workflow: def.workflow, source: def.source, cadenceDays: def.cadenceDays };
   if (!json) return { ...base, present: false, stale: true };
-  let d: { fetched?: string; count?: number; note?: string } = {};
+  let d: { fetched?: string; fetchedThrough?: string; count?: number; note?: string } = {};
   try { d = def.describe(json); } catch { d = {}; }
   const ageDays = ageInDays(d.fetched, now);
-  return { ...base, present: true, fetched: d.fetched, ageDays, count: d.count, note: d.note, stale: ageDays === undefined || ageDays > def.cadenceDays * 2 };
+  return { ...base, present: true, fetched: d.fetched, fetchedThrough: d.fetchedThrough, ageDays, count: d.count, note: d.note, stale: ageDays === undefined || ageDays > def.cadenceDays * 2 };
 }
 
 export function feedStatuses(now = new Date(), root = process.cwd()): FeedStatus[] {

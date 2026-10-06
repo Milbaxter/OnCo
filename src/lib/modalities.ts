@@ -68,7 +68,7 @@ export type ModalityHub = {
   components: ComponentGroup[];
   companies: CompanyRow[];
   trials: TrialRow[];
-  registry: { drugs: number; recruiting: number; fetched: string };
+  registry: { drugs: number; recruiting: number; fetched: string; fetchedFrom: string };
   sideEffects: { terms: SideEffectTerm[]; events: SideEffectEvent[]; drugsWithToxicity: number };
   resistance: ResistanceRow[];
   papers: PaperRow[];
@@ -171,8 +171,8 @@ function buildHub(def: FormatDef, f: FormatIndex, g: Graph): ModalityHub {
   const trials: TrialRow[] = [...trialMap.values()].map(({ trial: t, drugs: ds }) => ({
     trial: ref(t), nct: t.nct, phase: t.phase, status: t.status, setting: t.setting, sponsor: t.sponsor, cancers: cancersOf(t, g), drugs: unique(ds).sort(byName).map(ref), enrolled: t.enrolled, yearReported: t.yearReported,
   })).sort((a, b) => (b.phase === "3" ? 1 : 0) - (a.phase === "3" ? 1 : 0) || byName(a.trial, b.trial));
-  let recruiting = 0, withRegistry = 0, fetched = "";
-  for (const d of drugs) { const r = REGISTRY[d.id]; if (!r) continue; withRegistry++; recruiting += r.recruiting; if (r.fetched > fetched) fetched = r.fetched; }
+  let recruiting = 0, withRegistry = 0, fetched = "", fetchedFrom = "";
+  for (const d of drugs) { const r = REGISTRY[d.id]; if (!r) continue; withRegistry++; recruiting += r.recruiting; if (r.fetched > fetched) fetched = r.fetched; if (r.fetched && (!fetchedFrom || r.fetched < fetchedFrom)) fetchedFrom = r.fetched; }
 
   // Side-effect profile: glossary terms of the Side effects category linked from the medicines and technologies, then the label events the drug records carry.
   const termFrom = new Map<string, { term: Term; from: Entity[] }>();
@@ -239,7 +239,7 @@ function buildHub(def: FormatDef, f: FormatIndex, g: Graph): ModalityHub {
     how, terms,
     engine: { route: engineRoute(def.id), axes: [COMPONENT_LABEL[def.axes[0]], COMPONENT_LABEL[def.axes[1]]], rows: f.rows.length, cols: f.cols.filter((c) => c.id !== "not-recorded").length, counts: { approved: f.counts.approved, development: f.counts.development, stopped: f.counts.stopped, unclear: f.counts.unclear, untried: f.counts.untried }, placed: f.drugs.length, total: f.coverage.total, pct: f.coverage.pct },
     approved, phase3, components, companies, trials,
-    registry: { drugs: withRegistry, recruiting, fetched },
+    registry: { drugs: withRegistry, recruiting, fetched, fetchedFrom },
     sideEffects: { terms: sideTerms, events, drugsWithToxicity },
     resistance: resistanceRows, papers, eras, ideas,
     manufacturing: { sites, capabilities: man.capabilities.map((c) => CAPABILITY_LABEL[c]), chain, technologies: manTech },

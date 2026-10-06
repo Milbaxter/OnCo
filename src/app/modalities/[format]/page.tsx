@@ -9,6 +9,7 @@ import { BreadcrumbJsonLd, WebPageJsonLd } from "@/components/JsonLd";
 import { FormatGlyph, HUB_SECTION_GLYPH } from "@/components/FormatGlyph";
 import { Tip } from "@/components/Tip";
 import { StaticTable } from "@/components/filters/StaticTable";
+import { registryDateLabel } from "@/lib/registry-dates";
 import { modalityHub, MATURITY_LABEL, type ModalityHub, type Ref } from "@/lib/modalities";
 import { MODALITY_COLUMNS, modalityRows } from "@/lib/tables/modalities";
 import { pageRows } from "@/lib/static-tables";
@@ -212,7 +213,7 @@ export default async function ModalityPage({ params }: { params: Promise<{ forma
           )}
         </Section>
 
-        <Section id="trials" title="Trials recruiting now" aside={h.registry.drugs ? <>Corpus trial records; the ClinicalTrials.gov index adds {n(h.registry.recruiting)} recruiting studies across {n(h.registry.drugs)} medicines, fetched {h.registry.fetched}</> : undefined}>
+        <Section id="trials" title="Trials recruiting now" aside={h.registry.drugs ? <>Corpus trial records; the ClinicalTrials.gov index adds {n(h.registry.recruiting)} recruiting studies across {n(h.registry.drugs)} medicines, fetched {registryDateLabel(h.registry.fetchedFrom, h.registry.fetched)}</> : undefined}>
           <From refs={h.trials.map((t) => t.trial)} note="Trial records with a recruiting status that name a medicine of this format, or that a medicine's record lists." />
           <Table h={h} table="trials" noun="trials" empty="No trial record of this format is recruiting in the corpus." />
         </Section>

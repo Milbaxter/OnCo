@@ -10,6 +10,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import PipelinePage from "../app/pipeline/page";
 import ScorecardsPage from "../app/scorecards/page";
 import EnginePage from "../app/pipeline/engine/page";
+import ModalityPage from "../app/modalities/[format]/page";
+import { modalityHub } from "./modalities";
 
 // A partial refresh replaces one snapshot and retains another. Both products have
 // resolved parts in the drug engine, so both dates contribute to its evidence.
@@ -19,6 +21,11 @@ vi.mock("../../public/trials/index.json", () => ({ default: {
 } }));
 
 describe("mixed trial snapshot dates", () => {
+  it("shows both dates on the rendered ADC modality page and JSON model", async () => {
+    expect(modalityHub("adc")?.registry).toMatchObject({ fetched: "2026-10-06", fetchedFrom: "2026-09-01" });
+    const html = renderToStaticMarkup(await ModalityPage({ params: Promise.resolve({ format: "adc" }) }));
+    expect(html).toContain("fetched between 2026-09-01 and 2026-10-06 (dates differ by product)");
+  });
   it("discloses both dates in the scorecard and pipeline label", () => {
     expect(TRIALS_FETCHED).toBe("between 2026-09-01 and 2026-10-06 (dates differ by product)");
   });

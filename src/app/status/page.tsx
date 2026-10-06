@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { pageMeta } from "@/lib/seo";
 import { feedStatuses, readPublicJson, type FeedStatus } from "@/lib/feed-meta";
+import { registryDateLabel } from "@/lib/registry-dates";
 import { incidents } from "@/data/incidents";
 import { Container, GroupKicker, PageHeader } from "@/components/ui";
 import { runAudit } from "../../../scripts/audit";
@@ -73,7 +74,7 @@ export default function StatusPage() {
     id: f.id,
     feed: { text: f.label, strong: true, sub: f.script },
     state: state(f),
-    fetched: f.fetched ? { text: f.fetched, mono: true, className: "text-xs" } : undefined,
+    fetched: f.fetched ? { text: registryDateLabel(f.fetched, f.fetchedThrough ?? f.fetched), v: f.fetched, mono: true, className: "text-xs" } : undefined,
     age: f.ageDays !== undefined ? { text: `${f.ageDays} d`, v: f.ageDays } : undefined,
     count: f.count !== undefined ? { text: f.count.toLocaleString("en-GB"), v: f.count, sub: f.note } : f.note ? { text: "", v: -1, sub: f.note } : undefined,
     snapshot: f.present ? { text: f.path, href: `/${f.path}`, ext: true } : { text: f.path, muted: true },
