@@ -39,6 +39,15 @@ describe("semantic index", () => {
   it("returns nothing for a query with no known tokens", () => {
     expect(semanticSearch(index, "zzzz qqqq")).toEqual([]);
   });
+
+  it("filters before the result window without changing scores or explanations", () => {
+    const eligible = (id: string) => id !== "a";
+    const query = "drug for HER2-low breast cancer";
+    const expected = semanticSearch(index, query, index.ids.length).filter((h) => eligible(h.id)).slice(0, 2);
+    expect(semanticSearch(index, query, 2, { filter: eligible })).toEqual(expected);
+    expect(semanticSearch(index, query, 2, { filter: () => false })).toEqual([]);
+    expect(semanticSearch(index, query, 2, { filter: () => true })).toEqual(semanticSearch(index, query, 2));
+  });
 });
 
 describe("fuseRanks", () => {

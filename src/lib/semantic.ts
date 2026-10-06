@@ -209,7 +209,7 @@ export function queryVector(index: SemanticIndex, query: string): Array<[number,
  * Cosine search. `matched` lists the query tokens each hit shares, strongest first, for the explanation line.
  * When the query names a kind ("drug for ...", "which trial ..."), records of that kind score 1.3x.
  */
-export function semanticSearch(index: SemanticIndex, query: string, k = 20, opts: { kindBoost?: number } = {}): SemanticHit[] {
+export function semanticSearch(index: SemanticIndex, query: string, k = 20, opts: { kindBoost?: number; filter?: (id: string) => boolean } = {}): SemanticHit[] {
   const q = queryVector(index, query);
   if (!q.length) return [];
   const post = postings(index);
@@ -218,6 +218,9 @@ export function semanticSearch(index: SemanticIndex, query: string, k = 20, opts
   const scores = new Map<number, { s: number; m: Array<[string, number]> }>();
   for (const [ti, qw] of q) {
     for (const [di, dw] of post.get(ti) ?? []) {
+      // Filter before accumulating scores and explanations, rather than expanding every hit
+      // and truncating its kind afterwards. Accepted records retain their original scores.
+      if (opts.filter && !opts.filter(index.ids[di])) continue;
       const cur = scores.get(di) ?? { s: 0, m: [] };
       cur.s += qw * dw;
       cur.m.push([index.vocab[ti], qw * dw]);

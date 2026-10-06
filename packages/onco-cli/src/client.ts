@@ -173,9 +173,9 @@ export class OncoClient {
     // Apply the kind restriction before each retrieval window. A fixed over-fetch cannot guarantee
     // recall: a common topic can have hundreds of trials ranked before its first matching drug.
     const want = opts.kind ? Math.max(limit * 6, 60) : Math.max(limit, 12);
-    const eligible = (hit: { id: string | number }) => !opts.kind || byId.get(String(hit.id))?.kind === opts.kind;
-    const lexical = ms.search(q).filter(eligible).slice(0, want).map((h) => ({ id: String(h.id) }));
-    const concept = sem ? semanticSearch(sem, q, opts.kind ? sem.ids.length : want).filter(eligible).slice(0, want) : [];
+    const eligible = (id: string) => !opts.kind || byId.get(id)?.kind === opts.kind;
+    const lexical = ms.search(q).filter((h) => eligible(String(h.id))).slice(0, want).map((h) => ({ id: String(h.id) }));
+    const concept = sem ? semanticSearch(sem, q, want, { filter: opts.kind ? eligible : undefined }) : [];
     const conceptById = new Map(concept.map((h) => [h.id, h.matched.slice(0, 4)]));
     const lexIds = new Set(lexical.map((h) => h.id));
     const hits: SearchHit[] = [];
