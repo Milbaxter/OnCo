@@ -9,6 +9,7 @@ import { paperQuery, searchPageUrl } from "@/lib/europepmc";
 import { Container, GroupKicker, PageHeader } from "@/components/ui";
 import { LatestPapers } from "@/components/LatestPapers";
 import { Tip } from "@/components/Tip";
+import { literatureDates, literatureDateLabel } from "@/lib/literature-dates";
 
 export const metadata: Metadata = pageMeta({ title: "Preprint tracker", description: "bioRxiv, medRxiv and other preprints from the last 90 days for every target, product and technology, refreshed weekly from Europe PMC, with the ones that have since appeared as journal articles.", path: "/preprints/" });
 
@@ -77,7 +78,8 @@ export default function PreprintsPage() {
         {index && (
           <>
             <div className="text-sm text-muted flex flex-wrap gap-x-4 gap-y-1">
-              <span>Snapshot: <b className="text-foreground">{index.fetched}</b></span>
+              <span>Topic data retrieved: <b className="text-foreground">{literatureDateLabel(literatureDates("preprints", index.entities))}</b></span>
+              <span>Snapshot run: <b className="text-foreground">{index.fetched}</b></span>
               <span>Window: last <b className="text-foreground">{index.windowDays} days</b></span>
               <span>Preprints: <b className="text-foreground">{items.length.toLocaleString("en-GB")}</b></span>
               <span>Since published: <b className="text-foreground">{published.length.toLocaleString("en-GB")}</b></span>

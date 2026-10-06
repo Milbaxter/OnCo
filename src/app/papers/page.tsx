@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Container, GroupKicker, PageHeader } from "@/components/ui";
 import { PulseTable, readPulse } from "@/components/PapersPulse";
 import { CitedPapers } from "@/components/CitedPapers";
+import { literatureDates, literatureDateLabel } from "@/lib/literature-dates";
 
 export const metadata: Metadata = pageMeta({ title: "Publishing trends", description: "Fastest-growing topics in the cancer literature, computed weekly from Europe PMC for every product, target, cancer, and technology in OnCo.", path: "/papers/" });
 
@@ -27,7 +28,8 @@ export default function PapersPage() {
         {index && (
           <>
             <div className="text-sm text-muted flex flex-wrap gap-x-4 gap-y-1">
-              <span>Snapshot: <b className="text-foreground">{index.fetched}</b></span>
+              <span>Topic data retrieved: <b className="text-foreground">{literatureDateLabel(literatureDates("papers", index.entities))}</b></span>
+              <span>Snapshot run: <b className="text-foreground">{index.fetched}</b></span>
               <span>Objects tracked: <b className="text-foreground">{n.toLocaleString()}</b></span>
               <span>Source: {index.source}</span>
               <span>Refreshed weekly by <a className="underline" href="https://github.com/judegomila/OnCo/blob/main/.github/workflows/refresh-papers.yml" rel="noopener">GitHub Actions</a></span>
