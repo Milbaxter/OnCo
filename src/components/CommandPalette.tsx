@@ -110,11 +110,17 @@ export function CommandPalette() {
   const pendingG = useRef<number | null>(null);
   const router = useRouter();
 
+  const openPalette = useCallback((toggle = false) => {
+    // Capture before React's autoFocus runs; repeated open events must keep the original opener.
+    if (!dialog.current) opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setOpen((isOpen) => toggle ? !isOpen : true);
+  }, []);
+
   // Global shortcut layer: ⌘K / Ctrl+K and Escape always; single keys only outside text fields and dialogs,
   // and only while the reader has them on (the "?" sheet has the switch; off is remembered in this browser).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setOpen((o) => !o); return; }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openPalette(true); return; }
       if (e.key === "Escape") { setOpen(false); setSheet(false); return; }
       if (open || sheet || e.metaKey || e.ctrlKey || e.altKey || typing(e) || !shortcutsEnabled()) return;
       if (pendingG.current !== null) {
@@ -124,7 +130,7 @@ export function CommandPalette() {
         return;
       }
       switch (e.key) {
-        case "/": e.preventDefault(); setOpen(true); break;
+        case "/": e.preventDefault(); openPalette(); break;
         case "?": e.preventDefault(); setSheet(true); break;
         case "g": pendingG.current = window.setTimeout(() => { pendingG.current = null; }, 1200); break;
         case "j": if (moveRow(1)) e.preventDefault(); break;
@@ -139,20 +145,20 @@ export function CommandPalette() {
     window.addEventListener("keydown", onKey);
     // Open synchronously inside the tap that asked for it: iOS only shows the keyboard when focus happens in the user gesture,
     // so the input must mount (and autofocus) before the click handler returns, not in a later timer.
-    const onOpen = () => flushSync(() => setOpen(true));
+    const onOpen = () => flushSync(openPalette);
     const onSheet = () => setSheet(true);
     window.addEventListener("onco:open-palette", onOpen);
     window.addEventListener("onco:open-shortcuts", onSheet);
     return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("onco:open-palette", onOpen); window.removeEventListener("onco:open-shortcuts", onSheet); };
-  }, [open, sheet, router]);
+  }, [open, sheet, router, openPalette]);
 
   useEffect(() => {
     if (!open) return;
-    opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const restoreFocus = opener.current;
     const t = setTimeout(() => input.current?.focus(), 0);
     loadSearch().then(({ docs }) => { setIndexed(docs.length); setReady(true); });
     document.body.style.overflow = "hidden";
-    return () => { clearTimeout(t); document.body.style.overflow = ""; opener.current?.focus?.(); };
+    return () => { clearTimeout(t); document.body.style.overflow = ""; if (restoreFocus?.isConnected) restoreFocus.focus(); };
   }, [open]);
 
   const run = useCallback((value: string) => {
@@ -200,7 +206,12 @@ export function CommandPalette() {
   if (sheet && !open) return <ShortcutsSheet onClose={() => setSheet(false)} />;
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[100] flex items-start justify-center bg-black/40 backdrop-blur-sm p-4 pt-[12vh]" onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false); }}>
+    <div className="fixed inset-0 z-[100] flex items-start justify-center bg-black/40 backdrop-blur-sm p-4 pt-[12vh]" onMouseDown={(e) => {
+      if (e.target === e.currentTarget) {
+        e.preventDefault(); // Keep the default mousedown action from blurring the restored opener.
+        setOpen(false);
+      }
+    }}>
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="Search OnCo" onKeyDown={trap} className="w-full max-w-2xl card shadow-2xl overflow-hidden">
         <div className="flex items-center gap-3 px-4 border-b border-border">
           <span className="text-muted" aria-hidden>⌕</span>
