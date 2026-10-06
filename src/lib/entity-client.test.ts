@@ -18,7 +18,7 @@ const good = () => new Response(JSON.stringify(record));
 describe("browser entity loading", () => {
   it.each([403, 429, 500, 503])("rejects HTTP %s and fetches again after recovery", async (status) => {
     fetchMock.mockResolvedValueOnce(new Response("Synthetic failure", { status })).mockResolvedValueOnce(good());
-    await expect(load(record.entity.id)).rejects.toThrow(String(status));
+    await expect(load(record.entity.id)).rejects.toMatchObject({ message: "The record could not be loaded. Try asking again.", cause: { message: `HTTP ${status}` } });
     await expect(load(record.entity.id)).resolves.toEqual(record);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
@@ -35,6 +35,12 @@ describe("browser entity loading", () => {
     await expect(load("missing")).resolves.toBeNull();
     await expect(load("missing")).resolves.toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it.each([null, {}, [], { ...record, entity: { ...record.entity, id: "wrong-fixture" } }])("rejects a malformed record envelope and retries", async (value) => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(value))).mockResolvedValueOnce(good());
+    await expect(load(record.entity.id)).rejects.toMatchObject({ cause: { message: "Invalid record response" } });
+    await expect(load(record.entity.id)).resolves.toEqual(record);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
   it("shares concurrent work and retains a successful record", async () => {
     fetchMock.mockResolvedValue(good());
@@ -57,7 +63,7 @@ describe("browser entity loading", () => {
     const index = { version: 1 as const, entries: [{ id: record.entity.id, kind: record.entity.kind, name: record.entity.name, aliases: [record.entity.name], route: record.route }], pairs: [] };
     const deps = { index, lexical: () => [record.entity.id], concept: () => [], load };
     fetchMock.mockResolvedValueOnce(new Response("Unavailable fixture", { status: 503 })).mockResolvedValueOnce(good());
-    await expect(answerQuestion("What is Alpha fixture?", deps)).rejects.toThrow("503");
+    await expect(answerQuestion("What is Alpha fixture?", deps)).rejects.toMatchObject({ cause: { message: "HTTP 503" } });
     const result = await answerQuestion("What is Alpha fixture?", deps);
     expect(result.sentences.length).toBeGreaterThan(0);
     expect(result.sources.map((s) => s.id)).toContain(record.entity.id);
