@@ -102,6 +102,17 @@ describe("search box recovery", () => {
     expect(text()).not.toMatch(/Loading index|No matches|unavailable/);
   });
 
+  it("recomputes a retained query when ArrowDown reopens a cancelled request", async () => {
+    focus(); type("alpha"); key("Escape"); await succeed();
+    expect(options()).toHaveLength(0);
+    key("ArrowDown"); await settle();
+    expect(input().props.value).toBe("alpha");
+    expect(options()).toHaveLength(3);
+    key("Enter");
+    expect(host.push).toHaveBeenLastCalledWith("/terms/alpha-1/");
+    expect(requests).toHaveLength(1);
+  });
+
   it("finishes loading when a changed query retries successfully", async () => {
     focus(); type("alp"); await fail();
     type("alpha"); await succeed();

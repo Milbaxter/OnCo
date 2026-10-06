@@ -84,7 +84,16 @@ export function SearchBox({ large = false, autoFocus = false }: { large?: boolea
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") { request.current++; setOpen(false); setActive(-1); return; }
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      if (!rows.length) return;
+      if (!rows.length) {
+        // Closing invalidates pending work. Reopen a retained query without relying on a hidden completion.
+        if (!open && q.trim()) {
+          e.preventDefault();
+          setOpen(true);
+          void runSearch(q);
+          if (e.key === "ArrowDown") setActive(0);
+        }
+        return;
+      }
       e.preventDefault();
       setOpen(true);
       const step = e.key === "ArrowDown" ? 1 : -1;
