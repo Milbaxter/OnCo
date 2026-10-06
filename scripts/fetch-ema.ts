@@ -217,11 +217,14 @@ async function main() {
   const euRows = Object.entries(regionalApprovals).filter(([, r]) => r.EU).map(([id]) => id);
   const checked = euRows.filter((id) => matchedIds.has(id));
   const disagreeing = snap.candidates.filter((c) => c.drugId && c.reason !== "not-in-corpus").length;
-  if (STAMP && checked.length && disagreeing === 0) {
+  // An unsupported status is neither a disagreement nor a verified check.
+  const verifiedIds = new Set(snap.verified.map((v) => v.drugId));
+  const unverified = checked.filter((id) => !verifiedIds.has(id)).length;
+  if (STAMP && checked.length && disagreeing === 0 && unverified === 0) {
     const src = readFileSync(DATA_FILE, "utf8");
     const next = src.replace(/export const EPAR_CHECKED = "\d{4}-\d{2}-\d{2}";/, `export const EPAR_CHECKED = "${snap.fetched}";`);
     if (next !== src) { writeFileSync(DATA_FILE, next); console.log(`ema: stamped EPAR_CHECKED = ${snap.fetched} (${checked.length} EU rows agree with the register)`); }
-  } else if (STAMP) console.log(`ema: not stamping (${disagreeing} disagreements, ${checked.length} rows checked)`);
+  } else if (STAMP) console.log(`ema: not stamping (${disagreeing} disagreements, ${checked.length} rows checked, ${unverified} unverified checked rows)`);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });
