@@ -1,19 +1,22 @@
-/** Browser loader for the concept-search index written by scripts/embed.ts. Fetched once, cached for the session. */
+/** Browser loader for the concept-search index written by scripts/embed.ts. Successful loads are cached for the session. */
 import { decodeSemanticIndex, type SemanticIndex, type SemanticMeta } from "./semantic";
 
 let cache: Promise<SemanticIndex | null> | null = null;
 
-/** Resolves to null when the index has not been built (e.g. a dev server without `npm run build:api`). */
+/** Null means absent or unavailable. Cache a missing build (404), but let failed loads retry. */
 export function loadSemantic(): Promise<SemanticIndex | null> {
   if (!cache) {
-    cache = Promise.all([fetch("/api/v1/embeddings.json"), fetch("/api/v1/embeddings.bin")])
+    const request = Promise.all([fetch("/api/v1/embeddings.json"), fetch("/api/v1/embeddings.bin")])
       .then(async ([m, b]) => {
-        if (!m.ok || !b.ok) return null;
+        // A failed endpoint must remain retryable even when its sibling returned 404.
+        for (const response of [m, b]) if (!response.ok && response.status !== 404) throw new Error(`Concept index HTTP ${response.status}`);
+        if (m.status === 404 || b.status === 404) return null;
         const meta = (await m.json()) as SemanticMeta;
         const bin = await b.arrayBuffer();
         return decodeSemanticIndex(bin, meta);
       })
-      .catch(() => null);
+      .catch(() => { if (cache === request) cache = null; return null; });
+    cache = request;
   }
   return cache;
 }

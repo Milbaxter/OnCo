@@ -36,7 +36,7 @@ const DEBOUNCE_MS = 120;
 const ALL_KINDS: readonly string[] = [...KINDS, "page"];
 
 /** The concept index once it has arrived, so a later search can fuse in the same frame as the word search. */
-let semanticResolved: SemanticIndex | null | undefined;
+let semanticResolved: SemanticIndex | undefined;
 
 /**
  * Outcome questions typed without a cancer name: "is it curable", "how long", "will I die". These are among the
@@ -154,7 +154,7 @@ export function SearchResults() {
     setRows(build(null));
     setPhase("lexical");
     const index = await loadSemantic();
-    semanticResolved = index;
+    if (index) semanticResolved = index;
     if (latest.current !== value) return;
     finish(index);
   }, []);
@@ -259,7 +259,7 @@ export function SearchResults() {
           {mine && rows.length > 0 && (
             <button type="button" onClick={() => setForMine((v) => !v)} aria-pressed={forMine} title={forMine ? "Show results for every cancer" : `Only results linked to ${mine.name}`} className={`chip border ${forMine ? "bg-accent text-accent-fg border-accent" : "border-accent/40 bg-accent-soft text-accent hover:border-accent"}`}><CancerIcon cancerId={mine.id} className="h-3 w-3" />for {shortCancerName(mine.name)} <span className="tabular-nums opacity-70">{mineCount}</span></button>
           )}
-          {semanticReady === false && <span className="text-xs text-muted">Concept index not built for this deployment; showing word matches only.</span>}
+          {semanticReady === false && <span className="text-xs text-muted">Concept search is unavailable; showing word matches only.</span>}
         </div>
       )}
 
