@@ -45,7 +45,7 @@ export function AskOnco({ examples }: { examples: AskExample[] }) {
     try {
       const [{ ms }, semantic, index] = await Promise.all([loadSearch(), loadSemantic(), loadAskIndex()]);
       if (latest.current !== key) return;
-      if (!index) { setState({ status: "error", message: "Ask is not available in this build. Search works: try the same words in the search box." }); return; }
+      if (!index) { setState({ status: "error", message: "Ask is unavailable. Try asking again, or search for the same words." }); return; }
       const result = await answerQuestion(value, {
         index,
         lexical: (text, k) => askLexical(ms, text, k),

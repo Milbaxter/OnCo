@@ -154,10 +154,14 @@ export function shortTldr(tldr: string, max = 160): string {
 
 let cache: Promise<AskIndex | null> | null = null;
 
-/** Browser loader; resolves to null when the index has not been built (dev server without `npm run build:api`). */
+/** Browser loader; null means absent or unavailable. Cache a missing build (404), but let failed loads retry. */
 export function loadAskIndex(): Promise<AskIndex | null> {
   if (!cache) {
-    cache = fetch("/api/v1/ask-index.json").then(async (r) => (r.ok ? decodeAskIndex((await r.json()) as AskIndexWire) : null)).catch(() => null);
+    cache = fetch("/api/v1/ask-index.json").then(async (r) => {
+      if (r.status === 404) return null;
+      if (!r.ok) throw new Error(`Ask index HTTP ${r.status}`);
+      return decodeAskIndex((await r.json()) as AskIndexWire);
+    }).catch(() => { cache = null; return null; });
   }
   return cache;
 }
