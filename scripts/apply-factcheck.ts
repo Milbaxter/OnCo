@@ -39,6 +39,20 @@ function propertyName(property: ts.ObjectLiteralElementLike): string | undefined
   return name && (ts.isIdentifier(name) || ts.isStringLiteral(name)) ? name.text : undefined;
 }
 
+function hasRecordFields(record: ts.ObjectLiteralExpression): boolean {
+  return record.properties.some((p) => ["name", "kind"].includes(propertyName(p) ?? ""));
+}
+
+/** A helper or spread may supply name/kind; do not assume its literal id is only a supplement. */
+function isRecordCandidate(record: ts.ObjectLiteralExpression): boolean {
+  if (hasRecordFields(record) || record.properties.some(ts.isSpreadAssignment)) return true;
+  let expression: ts.Node = record;
+  while (ts.isParenthesizedExpression(expression.parent) || ts.isAsExpression(expression.parent)
+    || ts.isTypeAssertionExpression(expression.parent) || ts.isSatisfiesExpression(expression.parent)
+    || ts.isNonNullExpression(expression.parent)) expression = expression.parent;
+  return ts.isCallExpression(expression.parent) && expression.parent.arguments.some((arg) => arg === expression);
+}
+
 function parsedRecords(source: string): { file: ts.SourceFile; records: Array<{ id: string; record: ts.ObjectLiteralExpression }> } {
   const file = ts.createSourceFile("data.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const records: Array<{ id: string; record: ts.ObjectLiteralExpression }> = [];
@@ -47,7 +61,7 @@ function parsedRecords(source: string): { file: ts.SourceFile; records: Array<{ 
       const ids = node.properties.filter((p) => propertyName(p) === "id");
       const ownId = ids[0];
       if (ids.length === 1 && ts.isPropertyAssignment(ownId) && ts.isStringLiteral(ownId.initializer)
-        && node.properties.some((p) => ["name", "kind"].includes(propertyName(p) ?? ""))) records.push({ id: ownId.initializer.text, record: node });
+        && isRecordCandidate(node)) records.push({ id: ownId.initializer.text, record: node });
     }
     ts.forEachChild(node, visit);
   };
@@ -59,7 +73,8 @@ function parsedRecord(source: string, id: string): { file: ts.SourceFile; record
   const parsed = parsedRecords(source);
   const records = parsed.records.filter((r) => r.id === id);
   // Ambiguous identities need a human; never silently edit the first of two copies.
-  return records.length === 1 ? { file: parsed.file, record: records[0].record } : null;
+  // Unresolved helper/spread candidates can prevent a patch, but cannot themselves authorise one.
+  return records.length === 1 && hasRecordFields(records[0].record) ? { file: parsed.file, record: records[0].record } : null;
 }
 
 /** Find an unambiguous record by its own literal id, independent of formatting. */

@@ -44,6 +44,12 @@ describe("apply-factcheck command identity preflight", () => {
     { name: "only the second copy has the field", first: `t({ id: "alpha", name: "Alpha" })`, second: record },
     { name: "another copy has a stale value", first: record, second: record.replace('"recruiting"', '"positive"') },
     { name: "a file already has duplicate copies", first: `[${record}, ${record}]`, second: record },
+    { name: "a helper copy inherits its name and kind from a spread", first: record, second: `const baseTrial = { kind: "trial", name: "Second Alpha" }; t({ ...baseTrial, id: "alpha", status: "recruiting" })` },
+    { name: "a helper supplies the name and kind", first: record, second: `const t = (x) => ({ kind: "trial", name: "Second Alpha", ...x }); t({ id: "alpha", status: "recruiting" })` },
+    { name: "a typed helper argument inherits the name and kind", first: record, second: `t(({ id: "alpha", status: "recruiting" } satisfies TrialFields))` },
+    { name: "a standalone copy inherits its name and kind", first: record, second: `const baseTrial = { kind: "trial", name: "Second Alpha" }; export const trials = [{ ...baseTrial, id: "alpha", status: "recruiting" }];` },
+    { name: "the inherited copy comes first", first: `t({ ...baseTrial, id: "alpha" })`, second: record },
+    { name: "a spread-backed copy is in the same file", first: `[${record}, t({ ...baseTrial, id: "alpha" })]`, second: "" },
   ])("refuses an ambiguous id when $name", ({ first, second }) => {
     const result = runApply({ "a.ts": first, "nested/b.ts": second });
     expect(result.status).toBe(0);
@@ -97,5 +103,12 @@ describe("apply-factcheck command identity preflight", () => {
     expect(result.status).toBe(0);
     expect(result.after).toEqual(result.before);
     expect(result.output).toContain('field is "positive"');
+  });
+
+  it("does not broaden patchable records to an unresolved helper or spread identity", () => {
+    const result = runApply({ "a.ts": `t({ ...baseTrial, id: "alpha", status: "recruiting" })` });
+    expect(result.status).toBe(0);
+    expect(result.after).toEqual(result.before);
+    expect(result.output).toContain("not applied alpha.status");
   });
 });
