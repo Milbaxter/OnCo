@@ -21,51 +21,58 @@ export function SearchBox({ large = false, autoFocus = false }: { large?: boolea
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [results, setResults] = useState<Hit[]>([]);
-  const [ready, setReady] = useState(false);
+  const [state, setState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   // -1 is the input itself: the first ArrowDown moves to the first row. Owner, 4 October 2026: "the user cannot
   // press down to get to the results after type a string". The command palette had this and this box never did.
   const [active, setActive] = useState(-1);
   const list = useRef<HTMLUListElement>(null);
   const box = useRef<HTMLDivElement>(null);
+  const input = useRef<HTMLInputElement>(null);
+  const request = useRef(0);
   const router = useRouter();
 
-  useEffect(() => {
-    if (!open) return;
-    loadSearch().then(() => setReady(true));
-  }, [open]);
-
-  const latest = useRef("");
-  const runSearch = (value: string) => {
-    latest.current = value;
+  const runSearch = async (value: string) => {
+    const current = ++request.current;
     setActive(-1);
-    if (!value.trim()) { setResults([]); return; }
-    loadSearch().then(async ({ ms, byId }) => {
-      if (latest.current !== value) return;
+    setResults([]);
+    setState("loading");
+    try {
+      const { ms, byId } = await loadSearch();
+      if (request.current !== current) return;
+      setState("ready");
+      if (!value.trim()) return;
       // Every hit comes back so the grouping can pick the top rows per kind; the dropdown itself shows VISIBLE rows.
       const lexical = searchRanked(ms, value) as SearchDoc[];
       setResults(lexical);
       if (lexical.length >= FALLBACK_BELOW) return;
       // Too few exact matches: add concept matches (paraphrases, linked names), labelled as such. The concept index
-      // code loads with the first fallback rather than with the page.
-      const [{ loadSemantic }, { semanticSearch }] = await Promise.all([import("@/lib/semantic-client"), import("@/lib/semantic")]);
-      const index = await loadSemantic();
-      if (!index || latest.current !== value) return;
-      const seen = new Set(lexical.map((h) => h.id));
-      const extra: Hit[] = semanticSearch(index, value, 10).filter((h) => !seen.has(h.id)).map((h) => ({ ...byId.get(h.id)!, concept: h.matched.slice(0, 3) })).filter((h) => h.id).slice(0, VISIBLE - lexical.length);
-      setResults([...lexical, ...extra]);
-    });
+      // is optional: a failed chunk or request must not discard successful word matches.
+      try {
+        const [{ loadSemantic }, { semanticSearch }] = await Promise.all([import("@/lib/semantic-client"), import("@/lib/semantic")]);
+        const index = await loadSemantic();
+        if (!index || request.current !== current) return;
+        const seen = new Set(lexical.map((h) => h.id));
+        const extra: Hit[] = semanticSearch(index, value, 10).filter((h) => !seen.has(h.id)).map((h) => ({ ...byId.get(h.id)!, concept: h.matched.slice(0, 3) })).filter((h) => h.id).slice(0, VISIBLE - lexical.length);
+        setResults([...lexical, ...extra]);
+      } catch { /* Keep the word matches when concept search is unavailable. */ }
+    } catch {
+      if (request.current === current) setState("error");
+    }
   };
 
   useEffect(() => {
-    const onDoc = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setOpen(false); };
+    const pending = request;
+    const onDoc = (e: MouseEvent) => {
+      if (box.current && !box.current.contains(e.target as Node)) { pending.current++; setOpen(false); setActive(-1); }
+    };
     document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    return () => { pending.current++; document.removeEventListener("mousedown", onDoc); };
   }, []);
 
   const placeholder = useMemo(() => "Search TROP2, Enhertu, PSMA PET, TNBC, Gustave Roussy…", []);
   // Grouped by kind in tier order (cancers, then treatments and trials, and so on), a few rows per kind.
   const groups = useMemo(() => groupByKind(results, VISIBLE), [results]);
-  const close = () => { setOpen(false); setQ(""); setResults([]); setActive(-1); };
+  const close = () => { request.current++; setOpen(false); setQ(""); setResults([]); setState("idle"); setActive(-1); };
   const rows = useMemo(() => flattenGroups(groups), [groups]);
 
   // Keep the highlighted row in view when arrowing past the bottom of the dropdown.
@@ -75,7 +82,7 @@ export function SearchBox({ large = false, autoFocus = false }: { large?: boolea
   }, [active]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Escape") { setOpen(false); setActive(-1); return; }
+    if (e.key === "Escape") { request.current++; setOpen(false); setActive(-1); return; }
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       if (!rows.length) return;
       e.preventDefault();
@@ -95,11 +102,12 @@ export function SearchBox({ large = false, autoFocus = false }: { large?: boolea
   return (
     <div ref={box} className="relative">
       <input
+        ref={input}
         type="search"
         value={q}
         autoFocus={autoFocus}
-        onChange={(e) => { setQ(e.target.value); setOpen(true); runSearch(e.target.value); }}
-        onFocus={() => setOpen(true)}
+        onChange={(e) => { setQ(e.target.value); setOpen(true); void runSearch(e.target.value); }}
+        onFocus={() => { setOpen(true); if (!open) void runSearch(q); }}
         onKeyDown={onKeyDown}
         placeholder={placeholder}
         aria-label="Search OnCo"
@@ -113,9 +121,13 @@ export function SearchBox({ large = false, autoFocus = false }: { large?: boolea
       />
       {open && q.trim() && (
         <div className="absolute z-50 mt-1 w-full card shadow-xl max-h-96 overflow-auto">
-          {!ready && <div className="p-3 text-sm text-muted">Loading index…</div>}
-          {ready && results.length === 0 && <div className="p-3 text-sm text-muted">No matches.</div>}
-          <ul id="searchbox-list" ref={list} role="listbox" aria-label="Results">
+          {state === "loading" && <div role="status" className="p-3 text-sm text-muted">Loading index…</div>}
+          {state === "error" && <div className="p-3 text-sm">
+            <p role="status">Search is unavailable. Try again.</p>
+            <button type="button" onClick={() => { input.current?.focus(); void runSearch(q); }} className="mt-2 underline rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">Retry search</button>
+          </div>}
+          {state === "ready" && results.length === 0 && <div role="status" className="p-3 text-sm text-muted">No matches.</div>}
+          <ul id="searchbox-list" ref={list} role="listbox" aria-label="Results" aria-busy={state === "loading"}>
             {groups.map((g) => [
               <KindGroupHeader key={`h-${g.kind}`} kind={g.kind} />,
               ...g.items.map((r) => {
