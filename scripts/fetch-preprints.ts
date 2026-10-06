@@ -37,6 +37,14 @@ export type PreprintSnapshot = { id: string; kind: string; name: string; query: 
 export type PreprintIndex = { fetched: string; windowDays: number; source: string; entities: Record<string, { kind: string; name: string; count: number; published: number }>; items: Array<Preprint & { entityIds: string[] }>; published: Array<PublishedVersion & { entityIds: string[] }> };
 
 type CoreResult = PaperLite & { commentCorrectionList?: { commentCorrection?: Array<{ id: string; source: string; type: string }> }; bookOrReportDetails?: { publisher?: string } };
+type CoreResponse = { hitCount?: unknown; resultList?: { result?: unknown } };
+
+/** A successful HTTP response can still lack the search payload; that is not an empty result. */
+function coreResults(response: CoreResponse): CoreResult[] {
+  const results = response?.resultList?.result;
+  if (!Array.isArray(results)) throw new Error("Incomplete Europe PMC response: missing resultList.result array");
+  return results as CoreResult[];
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const isoDaysAgo = (d: number) => { const x = new Date(); x.setUTCDate(x.getUTCDate() - d); return x.toISOString().slice(0, 10); };
@@ -58,21 +66,24 @@ async function getJson<T>(url: string, tries = 4): Promise<T> {
 
 async function snapshot(id: string, kind: string, name: string, query: string): Promise<PreprintSnapshot> {
   const today = isoDaysAgo(0), from = isoDaysAgo(WINDOW_DAYS), pubFrom = isoDaysAgo(548);
-  const pp = await getJson<{ hitCount?: number; resultList?: { result?: CoreResult[] } }>(coreUrl(`((${query}) AND FIRST_PDATE:[${from} TO ${today}]) AND SRC:PPR`, 50));
+  const pp = await getJson<CoreResponse>(coreUrl(`((${query}) AND FIRST_PDATE:[${from} TO ${today}]) AND SRC:PPR`, 50));
+  const count = pp?.hitCount;
+  if (typeof count !== "number" || !Number.isInteger(count) || count < 0) throw new Error("Incomplete Europe PMC response: invalid preprint hitCount");
+  const preprintResults = coreResults(pp);
   await sleep(80);
   const pubUrl = coreUrl(`(${query}) AND HAS_PREPRINT:y AND SRC:MED AND FIRST_PDATE:[${pubFrom} TO ${today}]`, 50);
-  const pub = await getJson<{ resultList?: { result?: CoreResult[] } }>(pubUrl);
+  const pub = await getJson<CoreResponse>(pubUrl);
   const publishedByPpr = new Map<string, Preprint["published"]>();
   const nowPublished: PublishedVersion[] = [];
-  for (const r of pub.resultList?.result ?? []) {
+  for (const r of coreResults(pub)) {
     for (const c of r.commentCorrectionList?.commentCorrection ?? []) if (c.source === "PPR" && /preprint/i.test(c.type)) {
       publishedByPpr.set(c.id, { doi: r.doi, pmid: r.pmid, journal: r.journalTitle, date: r.firstPublicationDate, title: r.title });
       nowPublished.push({ pprId: c.id, doi: r.doi, pmid: r.pmid, journal: r.journalTitle, date: r.firstPublicationDate, title: r.title, authors: r.authorString });
     }
   }
-  const preprints: Preprint[] = (pp.resultList?.result ?? []).map((p) => ({ id: p.id, doi: p.doi, title: p.title, authors: p.authorString, publisher: p.bookOrReportDetails?.publisher, date: p.firstPublicationDate, published: publishedByPpr.get(p.id) }));
+  const preprints: Preprint[] = preprintResults.map((p) => ({ id: p.id, doi: p.doi, title: p.title, authors: p.authorString, publisher: p.bookOrReportDetails?.publisher, date: p.firstPublicationDate, published: publishedByPpr.get(p.id) }));
   // `nowPublished` covers preprints of any age (up to 18 months) whose journal version appeared; most are older than the window.
-  return { id, kind, name, query, fetched: today, windowDays: WINDOW_DAYS, count: pp.hitCount ?? preprints.length, preprints, nowPublished };
+  return { id, kind, name, query, fetched: today, windowDays: WINDOW_DAYS, count, preprints, nowPublished };
 }
 
 function writeIndex(snaps: Map<string, PreprintSnapshot>) {
