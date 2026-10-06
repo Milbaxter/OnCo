@@ -33,8 +33,9 @@ async function main() {
     const url = `https://api.openalex.org/works?filter=${encodeURIComponent(filter)}&per-page=50&select=id,doi,title,cited_by_count,publication_year,counts_by_year&mailto=${MAILTO}`;
     const json = await getJson<{ results?: Work[] }>(url);
     await sleep(250);
-    if (!json) { console.warn(`  batch ${i / 50 + 1} failed`); continue; }
-    for (const w of json.results ?? []) {
+    // Publish only after every batch succeeds: failed lookups are not missing DOI matches.
+    if (!json || !Array.isArray(json.results)) throw new Error(`citations: batch ${i / 50 + 1} failed or returned no results array; snapshot not replaced`);
+    for (const w of json.results) {
       const doi = w.doi ? normDoi(w.doi) : undefined;
       const id = doi ? byDoi.get(doi) : undefined;
       if (!id || !doi) continue;
