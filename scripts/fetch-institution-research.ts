@@ -220,7 +220,7 @@ async function pull(inst: Subject, r: Resolved, years: [number, number]): Promis
   const authorsJ = await get(`${works}&group_by=authorships.author.id`);
   const trialsJ = await get(`${works},concepts.id:${CLINICAL_TRIAL_CONCEPT}&per_page=1&select=id`);
   const topJ = await get(`${works}&sort=cited_by_count:desc&per_page=${TOP_WORKS}&cited_by_count_sum=true&select=id,doi,title,publication_year,cited_by_count,type,open_access,primary_location`);
-  if (!byYearJ || !topJ) return null;
+  if (!byYearJ || !byTypeJ || !oaJ || !authorsJ || !trialsJ || !topJ) return null;
   const byYear: Record<string, number> = {};
   for (let y = years[0]; y <= years[1]; y++) byYear[String(y)] = 0;
   for (const g of groups(byYearJ)) if (g.key in byYear) byYear[g.key] = g.count;
