@@ -35,9 +35,11 @@ export const FEEDS: FeedDef[] = [
   { id: "trials", label: "ClinicalTrials.gov phase 2/3 counts", path: "trials/index.json", script: "scripts/fetch-trials.ts", workflow: "refresh-trials.yml", cadenceDays: 7, source: "ClinicalTrials.gov API v2",
     describe: (j) => {
       const entries = Object.values(j) as Array<{ fetched?: string }>;
-      const dates = registryDateRange(entries.map((e) => ({ fetched: e.fetched ?? "" })));
+      const knownDates = entries.map((e) => str(e.fetched))
+        .filter((date): date is string => !!date && Number.isFinite(Date.parse(date)));
+      const dates = registryDateRange(knownDates.map((fetched) => ({ fetched })));
       // A retained old or undated snapshot must not look fresh after another product succeeds.
-      return { fetched: entries.every((e) => e.fetched) ? dates.oldest || undefined : undefined,
+      return { fetched: knownDates.length === entries.length ? dates.oldest || undefined : undefined,
         fetchedThrough: dates.newest || undefined, count: entries.length,
         note: "products with a trial snapshot; age and state use the oldest product snapshot" };
     } },

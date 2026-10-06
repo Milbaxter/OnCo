@@ -69,6 +69,7 @@ describe("feed-meta", () => {
   it.each([
     [{ first: { fetched: "2026-10-06" }, second: { fetched: "2026-10-06" } }, "2026-10-06", false],
     [{ first: { fetched: "2026-10-06" }, second: {} }, undefined, true],
+    [{ first: { fetched: "2026-10-06" }, second: { fetched: "not a date" } }, undefined, true],
     [{}, undefined, true],
   ])("handles homogeneous and undated trial snapshots conservatively", (snapshot, fetched, stale) => {
     const root = mkdtempSync(join(tmpdir(), "onco-feeds-"));
