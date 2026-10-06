@@ -33,6 +33,69 @@ export type AutoPulseFeed = { id: string; name: string; homepage: string; url: s
 export type AutoPulseItem = { feedId: string; title: string; url: string; date?: string; refs: string[] };
 export type AutoPulseSnapshot = { fetched: string; feeds: AutoPulseFeed[]; items: AutoPulseItem[] };
 
+/** Skip XML preambles without fetching an external DTD or mistaking its quoted text for the root. */
+function feedRootText(text: string): string {
+  let rest = text.replace(/^\uFEFF/, "").trim();
+  for (;;) {
+    const misc = rest.match(/^(?:<!--[\s\S]*?-->|<\?[\s\S]*?\?>)\s*/)?.[0];
+    if (misc) { rest = rest.slice(misc.length); continue; }
+    if (!/^<!DOCTYPE\s/.test(rest)) break;
+    let quote = "", subset = 0, end = -1;
+    for (let i = 9; i < rest.length; i++) {
+      const c = rest[i];
+      if (quote) { if (c === quote) quote = ""; }
+      else if (rest.startsWith("<!--", i)) {
+        const endComment = rest.indexOf("-->", i + 4);
+        if (endComment < 0) return "";
+        i = endComment + 2;
+      }
+      else if (c === '"' || c === "'") quote = c;
+      else if (c === "[") subset++;
+      else if (c === "]") subset--;
+      else if (c === ">" && subset === 0) { end = i; break; }
+    }
+    if (end < 0) return "";
+    rest = rest.slice(end + 1).trimStart();
+  }
+  // Comments and processing instructions may follow the document element too.
+  for (;;) {
+    const start = rest.endsWith("-->") ? rest.lastIndexOf("<!--") : rest.endsWith("?>") ? rest.lastIndexOf("<?") : -1;
+    if (start < 0) return rest;
+    rest = rest.slice(0, start).trimEnd();
+  }
+}
+
+/** Recognise the supported feed envelope, not full XML/schema validity or completeness of its items. */
+function isFeedResponse(text: string): boolean {
+  const xml = feedRootText(text);
+  const root = xml.match(/^<([A-Za-z_][\w.:-]*)(\s+(?:[^"'<>]|"[^"]*"|'[^']*')*)?>/);
+  const close = xml.match(/<\/([A-Za-z_][\w.:-]*)\s*>$/);
+  if (!root || !close || root[1] !== close[1]) return false;
+  const namespaces = (attributes: string, parent = new Map<string, string>()) => {
+    const ns = new Map(parent);
+    for (const a of attributes.matchAll(/(?:^|\s)xmlns(?::([\w.-]+))?\s*=\s*(["'])(.*?)\2/g)) ns.set(a[1] ?? "", a[3]);
+    return ns;
+  };
+  const name = (qname: string, ns: Map<string, string>) => {
+    const colon = qname.indexOf(":");
+    return { local: qname.slice(colon + 1), uri: colon < 0 ? ns.get("") ?? "" : ns.get(qname.slice(0, colon)) };
+  };
+  const ns = namespaces(root[2] ?? ""), document = name(root[1], ns);
+  if (document.local === "feed" && document.uri === "http://www.w3.org/2005/Atom") return true;
+  const rss2 = document.local === "rss" && document.uri === "";
+  const rdf = document.local === "RDF" && document.uri === "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
+  if (!rss2 && !rdf) return false;
+  const body = xml.slice(root[0].length, close.index).replace(/<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>/g, "");
+  let depth = 0;
+  for (const tag of body.matchAll(/<(\/?)([A-Za-z_][\w.:-]*)(\s+(?:[^"'<>]|"[^"]*"|'[^']*')*)?\s*\/?>/g)) {
+    if (tag[1]) { depth--; continue; }
+    const child = name(tag[2], namespaces(tag[3] ?? "", ns));
+    if (depth === 0 && child.local === "channel" && child.uri === (rdf ? "http://purl.org/rss/1.0/" : "")) return true;
+    if (!/\/\s*>$/.test(tag[0])) depth++;
+  }
+  return false;
+}
+
 async function main() {
   const g = graph();
   const matcher = new NameMatcher(matchableFromGraph(g.entities as never), ["drug", "target", "cancer", "technology", "trial", "company"]);
@@ -45,7 +108,10 @@ async function main() {
   for (const f of FEEDS) {
     const text = await getText(f.url, { accept: f.id === "fda-oce" ? "text/html" : "application/rss+xml, application/atom+xml, application/xml, text/xml" });
     await sleep(500);
-    if (!text) { snap.feeds.push({ ...f, ok: false, count: 0, error: "unreachable or blocked" }); console.warn(`pulse: ${f.id} failed`); continue; }
+    if (!text || (f.id !== "fda-oce" && !isFeedResponse(text))) {
+      const error = text ? "response is not a supported feed" : "unreachable or blocked";
+      snap.feeds.push({ ...f, ok: false, count: 0, error }); console.warn(`pulse: ${f.id} failed: ${error}`); continue;
+    }
     let items: FeedItem[] = f.id === "fda-oce" ? parseOcePage(text).map((o) => ({ title: o.title, link: o.url, date: o.date, summary: o.summary })) : parseFeed(text);
     if (f.onlyOncology) items = items.filter((i) => ONCO_WORDS.test(`${i.title} ${i.summary ?? ""}`));
     items = items.filter((i) => !i.date || i.date >= cutoff).slice(0, MAX_PER_FEED);
