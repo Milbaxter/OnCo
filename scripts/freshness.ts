@@ -21,35 +21,8 @@ import { routeFor, type Entity } from "../src/lib/schema";
 import { calendar } from "../src/data/calendar";
 import { eventDate } from "./audit";
 
-export type Track = "clinical" | "scientific" | "regulatory" | "advocate" | "editorial";
-export const TRACK_META: Record<Track, { label: string; owner: string }> = {
-  clinical: { label: "Expert (clinical)", owner: "Cancer pages, standard-of-care rows, trial outcomes" },
-  scientific: { label: "Expert (scientific)", owner: "Targets, pathways, technologies, payloads, resistance" },
-  regulatory: { label: "Expert (regulatory)", owner: "Product approvals, regulatory events, calendar" },
-  advocate: { label: "Patient advocate", owner: "TL;DRs, glossary, questions and reading paths" },
-  editorial: { label: "Maintainer", owner: "Everything else: companies, institutions, people, ideas, papers" },
-};
-
-export type Sla = { id: string; label: string; track: Track; days: number; critical: boolean; applies: (e: Entity) => boolean };
-
-const APPROVED = new Set(["approved", "standard-of-care"]);
-const OPEN_TRIAL = new Set(["recruiting", "active", "planned"]);
-
-/** Order matters: the first SLA whose `applies` matches a record owns it. */
-export const SLAS: Sla[] = [
-  { id: "approved-products", label: "Approved products and standard-of-care regimens", track: "regulatory", days: 90, critical: true, applies: (e) => e.kind === "drug" && APPROVED.has(e.status ?? "") },
-  { id: "recruiting-trials", label: "Recruiting, active or planned trials", track: "clinical", days: 120, critical: true, applies: (e) => e.kind === "trial" && OPEN_TRIAL.has(e.status ?? "") },
-  { id: "cancers", label: "Cancer pages", track: "clinical", days: 180, critical: true, applies: (e) => e.kind === "cancer" },
-  { id: "pipeline-products", label: "Pipeline products (not yet approved)", track: "regulatory", days: 180, critical: false, applies: (e) => e.kind === "drug" },
-  { id: "reported-trials", label: "Reported and completed trials", track: "clinical", days: 365, critical: false, applies: (e) => e.kind === "trial" },
-  { id: "pairings", label: "Pairings and cautions", track: "clinical", days: 365, critical: false, applies: (e) => e.kind === "pairing" },
-  { id: "targets-pathways", label: "Targets and pathways", track: "scientific", days: 365, critical: false, applies: (e) => e.kind === "target" || e.kind === "pathway" },
-  { id: "technologies", label: "Technologies and roadmaps", track: "scientific", days: 365, critical: false, applies: (e) => e.kind === "technology" || e.kind === "roadmap" },
-  { id: "glossary", label: "Glossary terms and fronts", track: "advocate", days: 730, critical: false, applies: (e) => e.kind === "term" || e.kind === "section" },
-  { id: "organisations", label: "Companies, institutions and people", track: "editorial", days: 365, critical: false, applies: (e) => e.kind === "company" || e.kind === "institution" || e.kind === "person" },
-  { id: "ideas", label: "Ideas and bottlenecks", track: "editorial", days: 365, critical: false, applies: (e) => e.kind === "idea" || e.kind === "bottleneck" },
-  { id: "literature", label: "Key papers, journals and collections", track: "editorial", days: 730, critical: false, applies: (e) => e.kind === "paper" || e.kind === "journal" || e.kind === "collection" },
-];
+export { TRACK_META, SLAS, type Track, type Sla } from "../src/lib/review-due";
+import { SLAS, TRACK_META, type Track, type Sla } from "../src/lib/review-due";
 
 /** The readout calendar is not an entity list; an event more than 30 days in the past that is still listed is stale. */
 export const CALENDAR_SLA = { id: "calendar", label: "Readout calendar (events still listed 30 days after their date)", track: "regulatory" as Track, days: 30, critical: true };
