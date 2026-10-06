@@ -22,7 +22,7 @@ import { CancerIcon } from "./CancerIcon";
 import { askHref, FEW_HITS, looksLikeQuestion, normaliseQuery, parseSearchState, searchHref, searchQueryString, searchTerms, usefulSuggestions } from "@/lib/search-query";
 
 type Row = SearchDoc & { lexical?: string[]; concept?: string[]; both: boolean; rank: number };
-type Phase = "idle" | "loading" | "lexical" | "fused";
+type Phase = "idle" | "loading" | "error" | "lexical" | "fused";
 type Related = { of: Row; items: Neighbour[] };
 /** An Ask OnCo outcome tagged with the query it answers, so a stale answer never shows under a new query. */
 type AskState = { q: string; result: AskResult | "unavailable" };
@@ -112,6 +112,7 @@ export function SearchResults() {
   const myId = useMyCancer().id;
   const mine = pickMyCancer(useMyCancerList(!!myId), myId);
   const [query, setQuery] = useState("");
+  const [attempt, setAttempt] = useState(0);
   const [kind, setKind] = useState<string | null>(null);
   const [rows, setRows] = useState<Row[] | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -119,21 +120,28 @@ export function SearchResults() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [ask, setAsk] = useState<AskState | null>(null);
   const [related, setRelated] = useState<Related | null>(null);
-  const latest = useRef("");
+  const latest = useRef(0);
   const searchReady = useRef(false);
   const urlReady = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const run = useCallback(async (raw: string) => {
+    const request = ++latest.current;
     const value = normaliseQuery(raw);
-    latest.current = value;
+    // A repeated query is a new attempt too: retry the answer and invalidate earlier A-to-B-to-A work.
+    setAttempt(request);
     setQuery(value);
-    if (!value) { setRows(null); setPhase("idle"); setSuggestions([]); return; }
+    setAsk(null);
+    setRows(null);
+    setSuggestions([]);
+    if (!value) { setPhase("idle"); return; }
     const terms = searchTerms(value) || value;
     if (!searchReady.current) setPhase("loading");
-    const { ms, byId } = await loadSearch();
+    const search = await loadSearch().catch(() => null);
+    if (latest.current !== request) return;
+    if (!search) { setPhase("error"); return; }
+    const { ms, byId } = search;
     searchReady.current = true;
-    if (latest.current !== value) return;
     const lexical: SearchResult[] = searchRanked(ms, terms, TOP);
     const lexTerms = new Map(lexical.map((h) => [String(h.id), Object.keys(h.match ?? {})]));
     const build = (index: SemanticIndex | null): Row[] => {
@@ -153,9 +161,9 @@ export function SearchResults() {
     // First paint straight from the word index; the concept index is fused in when it lands.
     setRows(build(null));
     setPhase("lexical");
-    const index = await loadSemantic();
+    const index = await loadSemantic().catch(() => null);
+    if (latest.current !== request) return;
     semanticResolved = index;
-    if (latest.current !== value) return;
     finish(index);
   }, []);
 
@@ -180,31 +188,38 @@ export function SearchResults() {
     run(value);
   };
   const type = (value: string) => {
+    latest.current++;
     setQ(value);
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => run(value), DEBOUNCE_MS);
   };
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  useEffect(() => {
+    const pending = latest, debounce = timer;
+    return () => { pending.current++; if (debounce.current) clearTimeout(debounce.current); };
+  }, []);
 
-  // Ask OnCo, only when the query reads as a question and only after the list has painted.
+  // Ask OnCo follows the search attempt, so submitting the same question also retries failed setup.
   const isQuestion = looksLikeQuestion(query);
   useEffect(() => {
     if (!isQuestion || !query) return;
     let live = true;
     (async () => {
-      const [{ ms }, semantic, index] = await Promise.all([loadSearch(), loadSemantic(), loadAskIndex()]);
-      if (!live) return;
-      if (!index) { setAsk({ q: query, result: "unavailable" }); return; }
-      const result = await answerQuestion(query, {
-        index,
-        lexical: (text, k) => askLexical(ms, text, k),
-        concept: (text, k) => (semantic ? semanticSearch(semantic, text, k).map((h) => h.id) : []),
-        load: loadEntityRecord,
-      }).catch(() => null);
-      if (live) setAsk({ q: query, result: result ?? "unavailable" });
+      try {
+        const [{ ms }, semantic, index] = await Promise.all([loadSearch(), loadSemantic(), loadAskIndex()]);
+        if (!live || latest.current !== attempt) return;
+        const result = index ? await answerQuestion(query, {
+          index,
+          lexical: (text, k) => askLexical(ms, text, k),
+          concept: (text, k) => (semantic ? semanticSearch(semantic, text, k).map((h) => h.id) : []),
+          load: loadEntityRecord,
+        }) : null;
+        if (live && latest.current === attempt) setAsk({ q: query, result: result ?? "unavailable" });
+      } catch {
+        if (live && latest.current === attempt) setAsk({ q: query, result: "unavailable" });
+      }
     })();
     return () => { live = false; };
-  }, [query, isQuestion]);
+  }, [query, isQuestion, attempt]);
   const askState = ask && ask.q === query ? ask.result : "loading";
   const askResult = typeof askState === "object" ? askState : null;
 
@@ -244,6 +259,7 @@ export function SearchResults() {
       </form>
 
       {phase === "loading" && <><p className="text-sm text-muted" role="status" aria-live="polite">Loading the search index…</p><Skeleton /></>}
+      {phase === "error" && <p className="text-sm text-muted" role="alert">Search is unavailable. Press Search to try again.</p>}
 
       {rows && (
         <div className="flex flex-wrap items-center gap-2 mb-3 text-sm">
