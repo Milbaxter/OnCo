@@ -7,9 +7,18 @@ All notable changes to OnCo are recorded here. The format follows [Keep a Change
 Regenerated from the commit log each time the site ships (`scripts/changelog-sync.ts`); the version sections below are written by hand when a release is cut.
 
 ### 6 October 2026
+- Seven trims to the top of a record page, and a review card that says what is true
+- About 19,500 pages stop opening with the least useful true thing they could say
 - Seven things leave the top of a record page
 - Three more things leave the top of a record page
 - Four things leave the top of a record page
+- chore: EU regional rows read from the EMA register pages (#154)
+
+### 5 October 2026
+- chore: render this week's issue to public/newsletter/ (#153)
+- chore: weekly fact check, audit, and provenance refresh (#152)
+- chore: refresh trial counts from ClinicalTrials.gov (#149)
+- chore: EU regional rows read from the EMA register pages (#128)
 
 ### 4 October 2026
 - The sources come off the sidebar and go to the foot of the page
