@@ -41,8 +41,8 @@ const toStrings = (v: unknown): string[] => (Array.isArray(v) ? v.flatMap(toStri
  * that pass, and the selection so a toolbar can show the same facets. With `url` the state is read from and
  * written to the query string exactly as EntityBrowser does (`?key=value`, repeating), using the column keys.
  */
-export function useColumnFilters<T>(rows: T[], columns: FilterableColumn<T>[], opts: { url?: boolean; defaultSort?: SortState; query?: string; initial?: Record<string, string[]> } = {}) {
-  const { url = false, defaultSort, query = "", initial } = opts;
+export function useColumnFilters<T>(rows: T[], columns: FilterableColumn<T>[], opts: { url?: boolean; urlScope?: string; defaultSort?: SortState; query?: string; initial?: Record<string, string[]> } = {}) {
+  const { url = false, urlScope, defaultSort, query = "", initial } = opts;
   const [sel, setSel] = useState<Record<string, string[]>>(initial ?? {});
   const [sort, setSort] = useState<SortState | undefined>(defaultSort);
   const [synced, setSynced] = useState(!url);
@@ -55,7 +55,7 @@ export function useColumnFilters<T>(rows: T[], columns: FilterableColumn<T>[], o
     const raf = requestAnimationFrame(() => {
       const params = new URLSearchParams(window.location.search);
       const known = (k: string) => { const c = columns.find((x) => x.key === k); return new Set(c ? rows.flatMap((r) => valueOf(c, r)) : []); };
-      const view = readViewParams(params, filterKeys, known, (k) => columns.some((c) => c.key === k && c.sortable));
+      const view = readViewParams(params, filterKeys, known, (k) => columns.some((c) => c.key === k && c.sortable), urlScope);
       if (Object.keys(view.sel).length) setSel(view.sel);
       if (view.sort) setSort(view.sort);
       setSynced(true);
@@ -67,10 +67,10 @@ export function useColumnFilters<T>(rows: T[], columns: FilterableColumn<T>[], o
   useEffect(() => {
     if (!url || !synced) return;
     const u = new URL(window.location.href);
-    u.search = viewParams(filterKeys, sel, query, sort, defaultSort, u.searchParams).toString();
+    u.search = viewParams(filterKeys, sel, query, sort, defaultSort, u.searchParams, urlScope).toString();
     const next = u.pathname + u.search + u.hash;
     if (next !== window.location.pathname + window.location.search + window.location.hash) window.history.replaceState(window.history.state, "", next);
-  }, [url, synced, sel, sort, query, defaultSort, filterKeys]);
+  }, [url, urlScope, synced, sel, sort, query, defaultSort, filterKeys]);
 
   const setFacet = (key: string, vals: string[]) => setSel((s) => ({ ...s, [key]: vals }));
   const clear = () => setSel({});
@@ -159,8 +159,10 @@ export function useRemoteRows<T>(first: T[], more?: MoreRows) {
  * With `more`, `rows` are only the first page of the table (in its default order) and the rest is fetched from
  * `more.src` when needed; filters, sort and the URL state then run over the whole set.
  */
-export function FilterableTable<T>({ rows: first, columns, rowKey, noun, url = false, defaultSort, pageSize, scroll, empty, toolbar, toolbarRight, query, initial, more }: {
+export function FilterableTable<T>({ rows: first, columns, rowKey, noun, url = false, urlScope, defaultSort, pageSize, scroll, empty, toolbar, toolbarRight, query, initial, more }: {
   rows: T[]; columns: FilterableColumn<T>[]; rowKey: (r: T) => string; noun: string; url?: boolean; defaultSort?: SortState; pageSize?: number; scroll?: boolean; empty?: string;
+  /** Stable query-key prefix when several tables on one page keep independent URL state. */
+  urlScope?: string;
   toolbar?: ReactNode; toolbarRight?: ReactNode; query?: string;
   /** Selection to start from before the URL (if any) is read: the server can pre-filter a table. */
   initial?: Record<string, string[]>;
@@ -169,7 +171,7 @@ export function FilterableTable<T>({ rows: first, columns, rowKey, noun, url = f
 }) {
   const remote = useRemoteRows(first, more);
   const rows = remote.rows;
-  const cf = useColumnFilters(rows, columns, { url, defaultSort, query, initial });
+  const cf = useColumnFilters(rows, columns, { url, urlScope, defaultSort, query, initial });
   const { t } = useT();
   // Anything the first page cannot answer needs every row: a filter, a search, or a sort other than the order the rows came in.
   const sortChanged = !!cf.sort && (cf.sort.key !== defaultSort?.key || cf.sort.dir !== defaultSort?.dir);

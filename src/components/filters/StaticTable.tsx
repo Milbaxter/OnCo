@@ -116,12 +116,13 @@ export function renderCell(c: Cell, col?: StaticColumn): ReactNode {
 }
 
 /**
- * The table. `url` keeps filters and sort in the query string (one table per page, since the keys are the column
- * keys); `noun` names the rows in the "N of M" count line. `more` (from `pageRows` in src/lib/static-tables.ts)
+ * The table. `url` keeps filters and sort in the query string; give each table a distinct `urlScope` when
+ * several share a page. `noun` names the rows in the "N of M" count line. `more` (from `pageRows` in src/lib/static-tables.ts)
  * says `rows` are only the first page and names the file with every row.
  */
-export function StaticTable({ rows, columns, noun, url = false, defaultSort, pageSize, scroll, empty, toolbar, toolbarRight, initial, more }: {
+export function StaticTable({ rows, columns, noun, url = false, urlScope, defaultSort, pageSize, scroll, empty, toolbar, toolbarRight, initial, more }: {
   rows: StaticRow[]; columns: StaticColumn[]; noun: string; url?: boolean; defaultSort?: SortState; pageSize?: number; scroll?: boolean; empty?: string;
+  urlScope?: string;
   toolbar?: ReactNode; toolbarRight?: ReactNode; initial?: Record<string, string[]>; more?: MoreRows;
 }) {
   // Memoised so the filtered rows (and the table's paging window) do not rebuild on every render of this component.
@@ -131,5 +132,5 @@ export function StaticTable({ rows, columns, noun, url = false, defaultSort, pag
     value: (r) => cellValues(r[c.key]),
     render: (r) => renderCell(r[c.key], c),
   })), [columns]);
-  return <FilterableTable<StaticRow> rows={rows} columns={cols} rowKey={(r) => r.id} noun={noun} url={url} defaultSort={defaultSort} pageSize={pageSize} scroll={scroll} empty={empty} toolbar={toolbar} toolbarRight={toolbarRight} initial={initial} more={more} />;
+  return <FilterableTable<StaticRow> rows={rows} columns={cols} rowKey={(r) => r.id} noun={noun} url={url} urlScope={urlScope} defaultSort={defaultSort} pageSize={pageSize} scroll={scroll} empty={empty} toolbar={toolbar} toolbarRight={toolbarRight} initial={initial} more={more} />;
 }

@@ -10,7 +10,7 @@ import type { TableFile } from "./index";
  * recruiting now, key papers and open questions. The page carries the first TABLE_PAGE rows of each and the rest
  * lives in /api/v1/tables/modality-<format>-<table>.json (scripts/build-tables.ts). Rows are plain cells, so the
  * client table draws them without anything crossing the server boundary but JSON; every filterable column's values
- * are deep-linkable through the table's query string (`?cancers=...`).
+ * are deep-linkable through scoped query keys (`?trials.cancers=tnbc`).
  */
 const CHIP = "border border-border bg-card text-xs";
 const chips = (xs: Ref[], chip = CHIP): CellObj[] => xs.map((x) => ({ text: x.name, v: x.id, href: x.route, chip }));

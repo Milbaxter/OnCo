@@ -78,7 +78,7 @@ function Table({ h, table, noun, empty }: { h: ModalityHub; table: ModalityTable
   const rows = modalityRows(h, table);
   if (!rows.length) return <p className={EMPTY}>{empty}</p>;
   const paged = pageRows(modalityTableId(h.format.id, table), rows);
-  return <div id={`${table}-table`}><StaticTable rows={paged.rows} more={paged.more} columns={MODALITY_COLUMNS[table]} noun={noun} url /></div>;
+  return <div id={`${table}-table`}><StaticTable rows={paged.rows} more={paged.more} columns={MODALITY_COLUMNS[table]} noun={noun} url urlScope={table} /></div>;
 }
 
 export default async function ModalityPage({ params }: { params: Promise<{ format: string }> }) {
