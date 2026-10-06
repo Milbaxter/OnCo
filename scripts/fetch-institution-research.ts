@@ -32,7 +32,7 @@
  * Polite pool: mailto on every request, about 5 requests per second.
  */
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { graph } from "../src/lib/graph";
 import type { Company, Institution, Person } from "../src/lib/schema";
@@ -85,7 +85,12 @@ let lastRequest = 0;
 async function get(url: string): Promise<Json | null> {
   const full = `${url}${url.includes("?") ? "&" : "?"}mailto=${MAILTO}${API_KEY ? `&api_key=${API_KEY}` : ""}`;
   const key = join(CACHE_DIR, `${createHash("sha1").update(full.replace(/&api_key=[^&]*/, "")).digest("hex")}.json`);
-  if (!FORCE && existsSync(key)) return JSON.parse(readFileSync(key, "utf8")) as Json;
+  // A snapshot is dated today, so its work counts must not come from an older day's cached responses.
+  // Keep same-day retries cheap; identity lookups retain their existing cache policy.
+  const worksRequest = url.startsWith(`${API}/works?`);
+  if (!FORCE && existsSync(key) && (!worksRequest || statSync(key).mtime.toISOString().slice(0, 10) === today())) {
+    return JSON.parse(readFileSync(key, "utf8")) as Json;
+  }
   if (budget.spent >= BUDGET) throw new BudgetExhausted(`run cap of ${BUDGET} credits reached`);
   for (let attempt = 0; attempt < 6; attempt++) {
     const wait = lastRequest + MIN_INTERVAL_MS - Date.now();
