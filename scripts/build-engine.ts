@@ -25,7 +25,7 @@ export function writeEngineFiles(apiDir: string, e: Engine = engine()): EngineFi
     out.push({ id: f.format.id, path: engineFile(f.format.id), file, cells: f.cells.length });
   }
   const index = {
-    drugs: e.drugs, fetched: e.fetched,
+    drugs: e.drugs, fetched: e.fetched, fetchedFrom: e.fetchedFrom,
     formats: e.formats.map((f) => ({ id: f.format.id, name: f.format.name, route: engineRoute(f.format.id), file: engineFile(f.format.id), axes: f.format.axes, counts: f.counts, coverage: f.coverage })),
     outside: e.outsideByReason,
     note: "Every state is derived from corpus records named in each format file; untried means no medicine in this corpus combines the two parts. CC BY-NC 4.0, attribute Data from OnCo (onco.cc). Not medical advice.",

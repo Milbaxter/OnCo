@@ -2,6 +2,7 @@ import type { Company, Drug } from "./schema";
 import { graph } from "./graph";
 import { regionalApprovals, approvedRegions } from "@/data/regional-approvals";
 import trialsIndex from "../../public/trials/index.json";
+import { registryDateLabel, registryDateRange } from "./registry-dates";
 
 /**
  * OnCo company score. Deliberately simple and fully disclosed, in the spirit of the institution ranking:
@@ -50,8 +51,9 @@ export type CompanyScore = {
 type IndexEntry = { total: number; byPhase: Record<string, number>; byStatus: Record<string, number>; recruiting: number; fetched: string };
 const TRIALS = trialsIndex as Record<string, IndexEntry>;
 
-/** The date the registry index was fetched (same for every entry). */
-export const TRIALS_FETCHED = Object.values(TRIALS)[0]?.fetched ?? "unknown";
+/** Successful snapshot dates can differ after a partial or targeted refresh. */
+const trialDates = registryDateRange(Object.values(TRIALS));
+export const TRIALS_FETCHED = registryDateLabel(trialDates.oldest, trialDates.newest);
 
 /** Collapse a free-text modality into a comparable class. */
 export function modalityClass(m: string): string {

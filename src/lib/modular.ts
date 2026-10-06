@@ -75,7 +75,7 @@ export type FormatIndex = {
   stopped: StopReason[];
   coverage: { total: number; full: number; partial: number; unresolved: number; pct: number };
 };
-export type Engine = { formats: FormatIndex[]; outside: OutsideDrug[]; outsideByReason: Array<{ reason: string; count: number }>; fetched: string; drugs: number };
+export type Engine = { formats: FormatIndex[]; outside: OutsideDrug[]; outsideByReason: Array<{ reason: string; count: number }>; /** Latest contributing registry snapshot; fetchedFrom is the oldest. */ fetched: string; fetchedFrom: string; drugs: number };
 
 /**
  * A combination proposed but not yet tried, as the format page renders it: one cell of the grid named by the ids
@@ -721,7 +721,7 @@ export function engine(): Engine {
   const perFormat = new Map<FormatId, { drugs: DecomposedDrug[]; unresolved: UnresolvedDrug[] }>();
   for (const f of FORMATS) perFormat.set(f.id, { drugs: [], unresolved: [] });
   const outside: OutsideDrug[] = [];
-  let fetched = "";
+  let fetched = "", fetchedFrom = "";
   for (const d of g.kind("drug")) {
     const cl = classify(d);
     const route = routeFor(d);
@@ -739,13 +739,17 @@ export function engine(): Engine {
     const confidence: Confidence = resolved.every((r) => r.confidence === "high") ? "high" : resolved.some((r) => r.confidence === "low") ? "low" : "medium";
     const fields = [...new Set(resolved.flatMap((r) => r.from))];
     const { state, evidence, reasons } = evidenceFor(d, g);
-    if (REGISTRY[d.id]?.fetched && REGISTRY[d.id].fetched > fetched) fetched = REGISTRY[d.id].fetched;
+    const date = REGISTRY[d.id]?.fetched;
+    if (date) {
+      if (date > fetched) fetched = date;
+      if (!fetchedFrom || date < fetchedFrom) fetchedFrom = date;
+    }
     bucket.drugs.push({ id: d.id, name: d.name, route, format: cl.format, status: d.status, modality: d.modality, components, confidence, fields, state, evidence, reasons });
   }
   const formats = FORMATS.map((f) => { const b = perFormat.get(f.id)!; b.drugs.sort((x, y) => x.name.localeCompare(y.name)); b.unresolved.sort((x, y) => x.name.localeCompare(y.name)); return buildFormat(f, b.drugs, b.unresolved); });
   const byReason = new Map<string, number>();
   for (const o of outside) byReason.set(o.reason, (byReason.get(o.reason) ?? 0) + 1);
-  cached = { formats, outside, outsideByReason: [...byReason.entries()].map(([reason, count]) => ({ reason, count })).sort((x, y) => y.count - x.count), fetched, drugs: g.kind("drug").length };
+  cached = { formats, outside, outsideByReason: [...byReason.entries()].map(([reason, count]) => ({ reason, count })).sort((x, y) => y.count - x.count), fetched, fetchedFrom, drugs: g.kind("drug").length };
   return cached;
 }
 

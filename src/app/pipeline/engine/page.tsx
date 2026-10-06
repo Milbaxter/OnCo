@@ -5,6 +5,7 @@ import { Container, GroupKicker, PageHeader } from "@/components/ui";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { Tip } from "@/components/Tip";
 import { engine } from "@/lib/modular";
+import { registryDateLabel } from "@/lib/registry-dates";
 import { CELL_STATES, COMPONENT_LABEL, engineFile, engineRoute, modalityRoute, STATE_META, type FormatDef } from "@/lib/modular-formats";
 
 export const metadata: Metadata = pageMeta({ title: "Open drug engine", description: "Every medicine in OnCo taken apart into its modules (target, payload, linker, isotope, costimulatory domain, E3 ligase) and, per format, the grid of every combination: approved, in development, tried and stopped with the recorded reason, or never tried.", path: "/pipeline/engine/" });
@@ -77,7 +78,7 @@ export default function EnginePage() {
             <h2 className="font-semibold text-base">How the pages are built</h2>
             <p>A decomposer (src/lib/modular.ts) reads each drug record&apos;s fields: its target list, its payload and linker fields, the ADC payload registry, the INN stem of its name (deruxtecan is DXd, vedotin is MMAE, tesirine is a PBD dimer), its mechanism text matched against the names the corpus uses for its targets, and the trial and target records that name it. Each part says which fields it was read from and how sure the reading is. A medicine whose grid row cannot be read from any record is listed as unresolved, never placed by guesswork.</p>
             <p>A cell&apos;s state comes from records alone: an approval row or a regulator&apos;s entry makes it approved; a recruiting, active or planned trial, a development-phase status or active studies in the ClinicalTrials.gov index make it in development; a withdrawn, negative or historic record, a terminated or negative trial or a withdrawn approval make it stopped, and the reason is quoted from the record (the registry&apos;s own whyStopped text where the sponsor wrote one). Untried means no medicine in this corpus combines the two parts: the corpus is large but not the world.</p>
-            <p className="text-xs text-muted">{n(e.drugs)} drug records; {n(e.outside.length)} are outside the engine ({e.outsideByReason.map((r) => `${n(r.count)} ${r.reason}`).join("; ")}). Registry index fetched {e.fetched}.</p>
+            <p className="text-xs text-muted">{n(e.drugs)} drug records; {n(e.outside.length)} are outside the engine ({e.outsideByReason.map((r) => `${n(r.count)} ${r.reason}`).join("; ")}). Registry snapshots fetched {registryDateLabel(e.fetchedFrom, e.fetched)}.</p>
           </div>
         </section>
       </Container>
