@@ -6,6 +6,11 @@ All notable changes to OnCo are recorded here. The format follows [Keep a Change
 
 Regenerated from the commit log each time the site ships (`scripts/changelog-sync.ts`); the version sections below are written by hand when a release is cut.
 
+### 6 October 2026
+- Seven things leave the top of a record page
+- Three more things leave the top of a record page
+- Four things leave the top of a record page
+
 ### 4 October 2026
 - The sources come off the sidebar and go to the foot of the page
 - Arrow keys reach the results, and a brand name finds its drug
