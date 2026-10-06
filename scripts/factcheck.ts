@@ -127,23 +127,19 @@ export function phaseFromRegistry(phases: string[] | undefined): Trial["phase"] 
 const compact = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 /**
- * Does the registry entry look like our trial? The whole name (without any parenthetical) is matched
- * against the acronym and titles with punctuation and spaces removed, so "KEYNOTE-522" matches
- * "KEYNOTE 522"; failing that, any word of five or more letters, or any token carrying a digit
- * ("GU009", "9ER", "ASP2215"), from the name or from `extra` (the linked drugs' names, codes and
- * brands, since registry titles often name the compound rather than the acronym) is enough. Records
- * that bundle two trials ("PALLAS & PENELOPE-B") therefore pass when the registry entry is either of
- * them. Returns false only when nothing matches at all.
+ * Require a complete trial name or alias in a registry title, acronym or protocol id. Punctuation
+ * and spacing may differ ("KEYNOTE-522" matches "KEYNOTE 522"), but a family name, shared drug or
+ * other isolated word cannot identify a study. Match within each field and keep word boundaries:
+ * "KEYNOTE-522" must not match "KEYNOTE-5220". An unresolved identity stays for human review.
  */
-export function nameMatchesRegistry(name: string, titles: string[], extra: string[] = []): boolean {
-  const hay = compact(titles.join(" "));
-  if (!hay) return true;
-  const base = name.replace(/\(.*?\)/g, " ");
-  const whole = compact(base);
-  if (whole.length >= 4 && hay.includes(whole)) return true;
-  const STOP = new Set(["trial", "study", "phase", "versus", "cancer", "tumour", "tumor", "patients", "treatment", "therapy", "group", "cohort", "adjuvant", "neoadjuvant", "metastatic", "advanced", "first", "second", "line", "combination", "chemotherapy", "standard", "randomised", "randomized", "generic", "biosimilar", "placebo"]);
-  const tokens = [name, ...extra].join(" ").split(/[^A-Za-z0-9]+/).map(compact).filter((t) => (t.length >= 5 && !STOP.has(t)) || (/\d/.test(t) && /[a-z]/.test(t) && t.length >= 3));
-  return tokens.some((t) => hay.includes(t));
+export function nameMatchesRegistry(name: string, titles: string[], aliases: string[] = []): boolean {
+  return [name, ...aliases].some((candidate) => {
+    const base = candidate.replace(/\(.*?\)/g, " ");
+    if (compact(base).length < 4) return false;
+    const parts = base.toLowerCase().match(/[a-z]+|\d+/g) ?? [];
+    const pattern = new RegExp(`(?:^|[^a-z0-9])${parts.join("[^a-z0-9]*")}(?:$|[^a-z0-9])`, "i");
+    return titles.some((title) => pattern.test(title));
+  });
 }
 
 type DrugsFdaApp = { application_number?: string; sponsor_name?: string; openfda?: { generic_name?: string[]; brand_name?: string[] }; submissions?: Array<{ submission_type?: string; submission_status?: string; submission_status_date?: string }> };
@@ -165,7 +161,7 @@ const isOurName = (n: string, ql: string) => { const l = n.toLowerCase(); return
 export type TrialProtocol = { identificationModule?: { briefTitle?: string; officialTitle?: string; acronym?: string; orgStudyIdInfo?: { id?: string }; secondaryIdInfos?: Array<{ id?: string }> }; statusModule?: { overallStatus?: string; whyStopped?: string; primaryCompletionDateStruct?: { date?: string; type?: string }; completionDateStruct?: { date?: string; type?: string } }; designModule?: { phases?: string[]; enrollmentInfo?: { count?: number; type?: string } } };
 
 /** Check a single registry response; network and corpus lookup stay in the caller. */
-export function checkRegistryTrial(t: Trial, ps: TrialProtocol | undefined, extra: string[], today: string): { mismatches: Mismatch[]; patches: Patch[] } {
+export function checkRegistryTrial(t: Trial, ps: TrialProtocol | undefined, today: string): { mismatches: Mismatch[]; patches: Patch[] } {
   const registryUrl = `https://clinicaltrials.gov/study/${t.nct}`;
   const mismatches: Mismatch[] = [];
   const patches: Patch[] = [];
@@ -174,7 +170,7 @@ export function checkRegistryTrial(t: Trial, ps: TrialProtocol | undefined, extr
   // Acronym, titles and the sponsor's own protocol ids (COG "ACNS0331", "RTOG 0129", "ISG-STS 1001"), which the titles often omit.
   const titles = [im.acronym ?? "", im.briefTitle ?? "", im.officialTitle ?? "", im.orgStudyIdInfo?.id ?? "", ...(im.secondaryIdInfos ?? []).map((s) => s.id ?? "")];
   const hasIdentity = titles.some((title) => compact(title).length > 0);
-  if (!hasIdentity || !nameMatchesRegistry(t.name, titles, extra)) {
+  if (!hasIdentity || !nameMatchesRegistry(t.name, titles, t.aka)) {
     mismatches.push({ check: "nct-title-mismatch", id: t.id, name: t.name, route: routeFor(t), recorded: `${t.nct}: "${t.name}"`, registry: hasIdentity ? `${im.acronym ? `${im.acronym}: ` : ""}${(im.briefTitle ?? im.officialTitle ?? "").slice(0, 120)}` : "registry returned no study title or identifier", url: registryUrl, severity: "medium" });
     // The registry may describe another study. Keep the identity warning for a person to resolve,
     // but do not offer its phase, enrolment or status as corrections to this record (including --all).
@@ -285,8 +281,7 @@ async function main() {
     const registryUrl = `https://clinicaltrials.gov/study/${t.nct}`;
     if (res === null) { report.errors.push(`CT.gov error for ${t.id}`); continue; }
     if (res === "404") { report.mismatches.push({ check: "nct-not-found", id: t.id, name: t.name, route: routeFor(t), recorded: t.nct!, registry: "not found", url: registryUrl, severity: "high" }); continue; }
-    const extra = [...t.aka, ...t.drugs.flatMap((id) => { const d = g.get(id); return d && d.kind === "drug" ? [d.name, d.code ?? "", d.brand ?? "", ...d.aka] : []; })];
-    const checked = checkRegistryTrial(t, (res as { protocolSection?: TrialProtocol }).protocolSection, extra, today);
+    const checked = checkRegistryTrial(t, (res as { protocolSection?: TrialProtocol }).protocolSection, today);
     report.mismatches.push(...checked.mismatches);
     patches.push(...checked.patches);
   }
