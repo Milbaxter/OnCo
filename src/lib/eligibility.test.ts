@@ -337,4 +337,33 @@ describe("biomarker negation and Boolean scope", () => {
     expect(result.verdict).toBe("unclear");
     expect(result.checklist[0].status).toBe("unknown");
   });
+
+  it.each([
+    "HER2 expression is not detected",
+    "HER2 expression was not detected",
+    "HER2 mutation is not detected",
+    "HER2 is expression-negative",
+  ])("reads the same negative suffix in profiles and criteria: %s", (text) => {
+    const bm = profileBiomarkers(["result"], { result: text });
+    expect(bm.present.has("HER2")).toBe(false);
+    expect(bm.absent.has("HER2")).toBe(true);
+    const result = score(parseCriteria("Inclusion Criteria:\n* HER2-positive disease."),
+      { stage: "unknown", biomarkers: ["result"], priorLines: [] },
+      { biomarkerLabels: { result: text }, drugNames: {} });
+    expect(result.verdict).toBe("unlikely");
+    expect(tagCriterion(text, "inclusion").biomarkersExcluded).toEqual(["HER2"]);
+    expect(tagCriterion(text, "exclusion").biomarkers).toEqual(["HER2"]);
+  });
+
+  it.each([
+    "HER2 expression is not not detected",
+    "HER2 expression has not been detected",
+    "HER2 expression was never detected",
+    "HER2 has not been detected",
+  ])("does not assert a positive result from an unsupported suffix negation: %s", (text) => {
+    const bm = profileBiomarkers(["result"], { result: text });
+    expect(bm.present.has("HER2")).toBe(false);
+    expect(bm.absent.has("HER2")).toBe(false);
+    expect(evaluate(text, "inclusion", ["her2"]).verdict).toBe("unclear");
+  });
 });

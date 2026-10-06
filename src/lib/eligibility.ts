@@ -199,9 +199,33 @@ export const THERAPY_PATTERNS: Array<[string, RegExp]> = [
 const NEGATIVE_BM = /(negative|wild[- ]?type|\bWT\b|without|lacking|absence of|no (?:known )?(?:[A-Za-z0-9-]+\s){0,3}(?:mutation|alteration|amplification|expression|rearrangement|fusion))/i;
 const REQUIRED_CUE = /(positive|\+\b|mutat|alteration|amplif|overexpress|express|rearrang|fusion|documented|confirmed|known|deficien|high|≥|>=|status)/i;
 const NEGATED_MARKER_PREFIX = /\b(?:(?:no|without)(?:\s+(?:any|known|detectable|documented|confirmed|clear))*(?:\s+evidence\s+of)?|(?:absence|lack)\s+of|lacking|negative\s+for|not)\s*$/i;
+type MarkerPolarity = "positive" | "negative" | "unclear";
+
+/** Read one attached result and leave its qualifiers for the caller; profiles and criteria use the same grammar. */
+function markerSuffix(after: string): { polarity: MarkerPolarity; rest: string } | undefined {
+  // A bare sign is a result, but the hyphen in HER2-directed is not.
+  const sign = after.match(/^\s*([+−-])(?=\W|$)/);
+  if (sign) return { polarity: sign[1] === "+" ? "positive" : "negative", rest: after.slice(sign[0].length) };
+  const copula = /^(?:is|are|was|were|must be)\s+/i;
+  let rest = after.replace(/^\s*(?:[-:]\s*)?/, "").replace(copula, "");
+  const attribute = rest.match(/^(mutations?|fusions?|rearrangements?|amplification|expression|status)\b\s*(?:[-:]\s*)?/i);
+  if (attribute) rest = rest.slice(attribute[0].length).replace(copula, "");
+  const negative = rest.match(/^(?:negative|wild[- ]?type|WT|loss|not (?:detected|mutated|amplified|expressed|overexpressed|rearranged|positive))\b/i);
+  if (negative) return { polarity: "negative", rest: rest.slice(negative[0].length) };
+  // "Expression" alone cannot overrule a following negation. Unsupported auxiliaries or nested negation
+  // are not assertions of either polarity, even if an expression/mutation noun was recognised first.
+  const localRest = rest.split(/[,;:.]|\b(?:and|or|but)\b/i)[0];
+  if (/^(?:no|not|never|without|absence|lacking)\b/i.test(rest)
+    || ((attribute || /^(?:has|have|had|does|do|did|can|could|may|might|will|would|should)\b/i.test(rest))
+      && /\b(?:no|not|never|without|absence|lacking|negative|wild[- ]?type)\b/i.test(localRest))) return { polarity: "unclear", rest };
+  const positive = rest.match(/^(?:positive|mutated|alterations?|amplified|overexpressed|overexpression|expressed|rearranged|deficient|high)\b/i);
+  if (positive) return { polarity: "positive", rest: rest.slice(positive[0].length) };
+  if (attribute && attribute[1].toLowerCase() !== "status") return { polarity: "positive", rest };
+  return undefined;
+}
 
 /** Read an explicit result attached to this marker before considering sentence-wide wording. */
-function markerPolarity(text: string, name: string, pattern: RegExp): "positive" | "negative" | "unclear" | undefined {
+function markerPolarity(text: string, name: string, pattern: RegExp): MarkerPolarity | undefined {
   const match = pattern.exec(text);
   if (!match) return undefined;
   const after = text.slice(match.index + match[0].length);
@@ -212,20 +236,15 @@ function markerPolarity(text: string, name: string, pattern: RegExp): "positive"
   const localBefore = before.split(/[,;:.]|\b(?:and|or|but)\b/i).at(-1) ?? "";
   // An unrecognised negation construction must not fall through to a nearby positive cue.
   if (/\b(?:no|not|without|absence|lacking|negative for|lack of)\b/i.test(localBefore.replace(NEGATED_MARKER_PREFIX, ""))) return "unclear";
-  if (/^\s*(?:[-:]\s*)?(?:(?:is|are|was|were|must be)\s+)?not\s+(?:negative|wild[- ]?type)\b/i.test(after)) return "unclear";
-  // A trailing minus is a result only at a word boundary, not the hyphen in e.g. HER2-directed.
-  if (name === "HR-negative"
-    || /^\s*(?:[-:]\s*)?(?:(?:is|are|was|were|must be)\s+)?(?:(?:mutations?|fusions?|rearrangements?|amplification|expression|status)\s*[-:]?\s*)?(?:negative\b|wild[- ]?type\b|WT\b|not (?:detected|mutated|amplified|expressed|overexpressed|rearranged|positive)\b|loss\b)/i.test(after)
-    || /^\s*[-−](?=\W|$)/.test(after)
-  ) return negated ? "unclear" : "negative";
+  const suffix = markerSuffix(after);
+  if (suffix?.polarity === "unclear") return "unclear";
+  if (name === "HR-negative" || suffix?.polarity === "negative") return negated ? "unclear" : "negative";
   // Absence of HER2-low does not establish HER2-positive or HER2-negative.
   if (name === "HER2" && /^[- ]low\b/i.test(after)) return negated ? "unclear" : "negative";
   if (negated) return "negative";
   if (name === "HR-positive" || name === "HER2-low" || name === "Triple-negative") return "positive";
-  if (/^\s*(?:[-:]\s*)?(?:(?:is|are|was|were|must be)\s+)?(?:positive\b|mutat|alteration|amplif|overexpress|express|rearrang|fusion|deficien|high\b)/i.test(after)
-    || /^\s*\+(?=\W|$)/.test(after)
-    || /positive for\s*$/i.test(before)) return "positive";
-  return undefined;
+  if (/positive for\s*$/i.test(before)) return "positive";
+  return suffix?.polarity;
 }
 
 /** Locations of named markers, ignoring overlapping generic/specific names of one marker. */
@@ -273,9 +292,10 @@ function simpleMarkerExclusion(text: string): boolean {
     const before = branch.slice(0, match.index).replace(NEGATED_MARKER_PREFIX, "");
     const after = branch.slice(match.index + match[0].length);
     const prefix = /^\s*(?:(?:patients?|participants?|subjects?)\s+(?:with\s+)?)?(?:(?:known|documented|confirmed)\s+|(?:presence|evidence)\s+of\s+)?$/i;
-    const suffix = /^\s*(?:[-:]\s*)?(?:(?:is|are|was|were|must be)\s+)?(?:(?:mutations?|fusions?|rearrangements?|amplification|expression|status)\s*[-:]?\s*)?(?:positive|negative|wild[- ]?type|WT|not (?:detected|mutated|amplified|expressed|overexpressed|rearranged|positive)|loss|mutations?|mutated|alterations?|amplified|amplification|overexpressed|overexpression|expressed|expression|rearranged|rearrangements?|fusions?|deficient|high|[+−-])?\s*(?:disease|cancers?|tumou?rs?)?\s*\.?\s*$/i;
+    const suffix = markerSuffix(after);
+    const unqualified = /^\s*(?:disease|cancers?|tumou?rs?)?\s*\.?\s*$/i.test(suffix?.rest ?? after);
     const polarity = markerPolarity(branch, ...marker);
-    return prefix.test(before) && suffix.test(after) && (polarity === "positive" || (branches.length === 1 && polarity === "negative"));
+    return prefix.test(before) && unqualified && (polarity === "positive" || (branches.length === 1 && polarity === "negative"));
   });
 }
 
