@@ -31,9 +31,9 @@ export function compareRecords(a: EntityRecord, b: EntityRecord) {
   const fb = new Map<string, string>([["Status", b.entity.status ?? ""], ["TL;DR", b.entity.tldr], ...keyFields(b.entity)]);
   const rawFields = (r: EntityRecord) => new Map<string, unknown>([["Status", r.entity.status ?? ""], ["TL;DR", r.entity.tldr], ...keyFieldValues(r.entity)]);
   const va = rawFields(a), vb = rawFields(b);
-  const keys = [...new Set([...fa.keys(), ...fb.keys()])];
+  const keys = [...new Set([...va.keys(), ...vb.keys()])];
   // CLI summaries truncate arrays and flatten objects. They are useful display text, but equality
-  // must use all source values; include them so an assistant can inspect differences past the preview.
+  // must use all source values, including false and empty fields hidden by both summaries.
   const fields = keys.map((field) => ({
     field, a: fa.get(field) ?? null, b: fb.get(field) ?? null,
     differs: !isDeepStrictEqual(va.get(field), vb.get(field)),

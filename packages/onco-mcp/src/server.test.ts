@@ -69,6 +69,8 @@ describe("onco-mcp", () => {
     expect(r.directlyLinked).toBe(true);
     expect(r.differing).toContain("Payload");
     expect(r.differing).not.toContain("Modality");
+    expect(r.fields).toContainEqual({ field: "Payload", a: "SN-38", b: "Deruxtecan", differs: true, values: { a: "SN-38", b: "Deruxtecan" } });
+    expect(r.fields).toContainEqual({ field: "Status", a: "approved", b: "approved", differs: false, values: { a: "approved", b: "approved" } });
     expect((r.sharedNeighbours as Array<{ id: string }>).map((n) => n.id)).toEqual(["tnbc"]);
     const [a, b] = await Promise.all([api.entity("sacituzumab-govitecan"), api.entity("tnbc")]);
     expect(compareRecords(a, b).note).toMatch(/Different kinds/);
@@ -107,6 +109,39 @@ describe("onco-mcp", () => {
         field: "Toxicity", differs: true, values: { a: a.entity.toxicity, b: b.entity.toxicity },
       }));
       expect(result.attribution).toBe(ATTRIBUTION);
+    } finally { entity.mockRestore(); }
+  });
+
+  it.each([
+    { key: "supportive", field: "Supportive", value: false },
+    { key: "brand", field: "Brand", value: "" },
+    { key: "mechanismSteps", field: "Mechanism Steps", value: [] },
+  ])("compares hidden $field values against absent and equal values through MCP", async ({ key, field, value }) => {
+    const a = comparisonFixture("fixture-a", []);
+    const b = comparisonFixture("fixture-b", []);
+    a.entity[key] = value;
+    const entity = vi.spyOn(api, "entity").mockImplementation(async (id) => id === a.entity.id ? a : b);
+    try {
+      for (const reverse of [false, true]) {
+        const result = json(await mcp.callTool({ name: "compare", arguments: { a: reverse ? b.entity.id : a.entity.id, b: reverse ? a.entity.id : b.entity.id } }));
+        expect(result.differing).toContain(field);
+        expect(result.fields).toContainEqual({
+          field, a: null, b: null, differs: true,
+          values: reverse ? { a: null, b: value } : { a: value, b: null },
+        });
+      }
+
+      // An explicit false or empty value is retained even when it matches on both sides.
+      b.entity[key] = value;
+      const equal = json(await mcp.callTool({ name: "compare", arguments: { a: a.entity.id, b: b.entity.id } }));
+      expect(equal.differing).not.toContain(field);
+      expect(equal.fields).toContainEqual({ field, a: null, b: null, differs: false, values: { a: value, b: value } });
+      expect(equal.differing).toEqual([]);
+
+      delete a.entity[key];
+      delete b.entity[key];
+      const absent = json(await mcp.callTool({ name: "compare", arguments: { a: a.entity.id, b: b.entity.id } }));
+      expect(absent.fields).not.toContainEqual(expect.objectContaining({ field }));
     } finally { entity.mockRestore(); }
   });
 
