@@ -152,7 +152,6 @@ export function Tabs({ tabs, ariaLabel, aside, after, current, anchors }: { tabs
               <h2 id={`h-${t.id}`} className="text-xl font-semibold tracking-tight inline-flex items-center gap-2">{t.glyph && <SectionGlyph name={t.glyph} className="h-5 w-5 text-accent" />}{t.href ? <Link href={t.href} className="hover:underline">{tl(t.label)}</Link> : tl(t.label)}</h2>
               {t.count !== undefined && <span className="text-sm text-muted tabular-nums">{t.count}</span>}
               {t.href && <Link href={t.href} className="text-sm text-accent hover:underline">{tl("See all")} →</Link>}
-              <a href="#top" onClick={(e) => { e.preventDefault(); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="ms-auto text-xs text-muted hover:text-foreground hover:underline">{tT("top")} <span aria-hidden>↑</span></a>
             </div>
           )}
           {t.content}

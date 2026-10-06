@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { KIND_META, type Kind } from "@/lib/kinds";
@@ -84,8 +83,10 @@ export function PaperTrend({ id }: { id: string }) {
       <span className="kicker">Literature trend</span>
       <Sparkline counts={e.counts} />
       <span><b className="text-foreground tabular-nums">{e.last12.toLocaleString()}</b> papers in the last 12 months</span>
-      {e.growth !== null && <span className={e.growth >= 0 ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}>{pct(e.growth)} vs prior 12</span>}
-      <Link href="/papers/" className="underline">How this is computed</Link>
+      {/* The growth figure and the "How this is computed" link came off on 6 October 2026. The owner: "it
+          doesnt add much value". A percentage against the previous twelve months swings wildly on a small
+          base, and the explanation of it was a link away from a page nobody was asking about. The count and
+          the shape of the bars are the part that reads at a glance; /papers/ still carries the method. */}
     </div>
   );
 }

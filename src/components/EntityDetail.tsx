@@ -3,9 +3,9 @@ import { enrolmentLabel } from "@/lib/enrolment";
 import { publicTags, tagRoute } from "@/lib/tags";
 import { Fragment, type ReactNode } from "react";
 import { EVIDENCE_TIER_LABEL, TARGET_ROLE_LABEL, type Entity, type Roadmap, type Term } from "@/lib/schema";
-import { KIND_META, phaseLabel, routeFor, type Kind } from "@/lib/kinds";
+import { phaseLabel, routeFor, type Kind } from "@/lib/kinds";
 import { graph } from "@/lib/graph";
-import { Bullets, ChipList, Container, KindChip, PageHeader, StatusChip } from "./ui";
+import { Bullets, ChipList, Container, PageHeader, StatusChip } from "./ui";
 import { Block, Field, KeyPapers, keyPapersFor, LatestLiterature, Refs, Summary, ToolsStrip } from "./record-blocks";
 import { PrevalenceTable } from "./PrevalenceTable";
 import { WhatIsBeingDone } from "./WhatIsBeingDone";
@@ -65,7 +65,7 @@ import { TargetSpecificityPills } from "./TargetSpecificityPills";
 import { SupportivePill } from "./SupportivePill";
 import { CompanyTypePill } from "./CompanyTypePill";
 import { TargetWhereFound, hpaFor } from "./TargetWhereFound";
-import { KindName, TL } from "./T";
+import { TL } from "./T";
 import { KIND_COLOR, statusClass } from "@/lib/text";
 import { withTermHovers } from "@/lib/term-hover";
 import { paperQuery } from "@/lib/europepmc";
@@ -144,7 +144,6 @@ function paperProvenance(papers: ReadonlyArray<{ note?: string }>): string[] {
 export function EntityDetail({ e }: { e: Entity }) {
   const g = graph();
   const neighbours = g.neighbours(e.id);
-  const meta = KIND_META[e.kind];
   const nCon = [...neighbours.values()].reduce((a, l) => a + l.length, 0);
 
   // Each tab's content is one keyed fragment. React Flight collapses a keyless fragment into a plain array as it
@@ -172,12 +171,19 @@ export function EntityDetail({ e }: { e: Entity }) {
     <>
       <JsonLd e={e} />
       <PageHeader
-        kicker={<><Link href={`/${meta.route}/`} className="kicker hover:underline"><KindName kind={e.kind} form="plural" fallback={meta.plural} /></Link><KindChip kind={e.kind} />{e.kind === "drug" ? <ApprovalChip drugId={e.id} status={e.status} /> : <StatusChip status={e.status} />}</>}
+        /* No kicker. The breadcrumb directly above already reads Home > Technologies > In vivo CAR-T, so the
+           kicker repeated the word "Technologies" and then a chip repeated it again as "Technology", and the
+           status pill sat above the title of the thing it describes. Owner, 6 October 2026. Checked before
+           removing: EntityDetail is rendered from exactly one route, src/app/[kind]/[id]/page.tsx, which always
+           renders Breadcrumbs immediately above it, and the breadcrumb is not hidden at any width. */
         title={e.name}
         titleAttrs={nameAttrs(e.kind)}
         ledeNode={<TldrText id={e.id} tldr={e.tldr} simple={e.simple} />}
         logo={e.kind === "cancer" ? <span className="inline-flex h-16 w-16 items-center justify-center rounded-2xl border border-accent/30 bg-accent-soft text-accent"><CancerIcon cancerId={e.id} className="h-10 w-10" /></span> : e.kind === "section" ? <span className="inline-flex h-16 w-16 items-center justify-center rounded-2xl border border-accent/30 bg-accent-soft text-accent"><FrontIcon id={e.id} className="h-9 w-9" /></span> : "website" in e ? <Logo id={e.id} website={e.website} name={e.name} size={64} /> : "url" in e && (e.kind === "collection" || e.kind === "journal") ? <Logo id={e.id} website={e.url} name={e.name} size={64} /> : undefined}
-        under={<AkaLine e={e} />}
+        under={<div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          {e.kind === "drug" ? <ApprovalChip drugId={e.id} status={e.status} /> : <StatusChip status={e.status} />}
+          <AkaLine e={e} />
+        </div>}
       />
       <Container className="pb-16">
         {(e.kind === "target" || e.kind === "pathway") && <MechanicsPills id={e.id} className="mb-6" />}
