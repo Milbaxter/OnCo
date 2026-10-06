@@ -42,9 +42,18 @@ async function getJson<T>(url: string, tries = 4): Promise<T> {
   throw new Error("unreachable");
 }
 
+function responseCount(response: { hitCount?: unknown }): number {
+  const count = response?.hitCount;
+  // A metadata-only HTTP 200 is not a zero-result search; keep the previous snapshot.
+  if (typeof count !== "number" || !Number.isInteger(count) || count < 0) {
+    throw new Error("Europe PMC response has no valid hitCount");
+  }
+  return count;
+}
+
 async function hitCount(query: string): Promise<number> {
-  const j = await getJson<{ hitCount?: number }>(restUrl(query, { pageSize: 1, resultType: "idlist" }));
-  return j.hitCount ?? 0;
+  const j = await getJson<{ hitCount?: unknown }>(restUrl(query, { pageSize: 1, resultType: "idlist" }));
+  return responseCount(j);
 }
 
 function isoDaysAgo(d: number): string {
@@ -60,8 +69,10 @@ async function snapshot(id: string, kind: string, name: string, query: string): 
   const today = isoDaysAgo(0), m12 = isoDaysAgo(365), m24 = isoDaysAgo(730);
   const last12 = await hitCount(`(${query}) AND FIRST_PDATE:[${m12} TO ${today}]`);
   const prior12 = await hitCount(`(${query}) AND FIRST_PDATE:[${m24} TO ${m12}]`);
-  const rec = await getJson<{ resultList?: { result?: PaperLite[] } }>(restUrl(query, { pageSize: 5 }));
-  const recent = (rec.resultList?.result ?? []).map((p) => ({ title: p.title, doi: p.doi, pmid: p.pmid, journal: p.journalTitle, date: p.firstPublicationDate, source: p.source, cited: p.citedByCount }));
+  const rec = await getJson<{ hitCount?: unknown; resultList?: { result?: PaperLite[] } }>(restUrl(query, { pageSize: 5 }));
+  responseCount(rec);
+  if (!Array.isArray(rec.resultList?.result)) throw new Error("Europe PMC response has no valid resultList.result");
+  const recent = rec.resultList.result.map((p) => ({ title: p.title, doi: p.doi, pmid: p.pmid, journal: p.journalTitle, date: p.firstPublicationDate, source: p.source, cited: p.citedByCount }));
   return { id, kind, name, query, fetched: today, counts, last12, prior12, recent };
 }
 
