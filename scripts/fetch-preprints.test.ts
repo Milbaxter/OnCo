@@ -78,7 +78,7 @@ describe("preprint snapshot response guards", () => {
     expect(JSON.parse(readFileSync(join(cwd, "calls.json"), "utf8"))).toBe(1);
   });
 
-  describe.each([[0, "preprints"], [1, "published versions"]] as const)("request %i (%s)", (at) => {
+  describe.each([{ at: 0, label: "preprints" }, { at: 1, label: "published versions" }])("request $at ($label)", ({ at }) => {
     it.each([
       ["version-only body", { version: "6.9" }], ["null body", null], ["array body", []],
       ["missing list", { hitCount: 1 }], ["missing results", { hitCount: 1, resultList: {} }],
