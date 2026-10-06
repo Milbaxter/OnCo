@@ -132,26 +132,31 @@ async function main() {
   };
 
   const buf = await getBuffer(EMA_XLSX);
-  if (!buf) { snap.errors.push("EMA spreadsheet unreachable"); writeJson(OUT, snap); process.exit(0); }
+  if (!buf) throw new Error("EMA spreadsheet unreachable; previous snapshots retained");
   const entries = zipEntries(buf);
   const sheet = entries.get("xl/worksheets/sheet1.xml"), shared = entries.get("xl/sharedStrings.xml");
-  if (!sheet) { snap.errors.push("EMA spreadsheet has no sheet1"); writeJson(OUT, snap); process.exit(0); }
+  if (!sheet) throw new Error("EMA spreadsheet has no sheet1; previous snapshots retained");
   const rows = parseSheet(sheet.toString("utf8"), shared?.toString("utf8") ?? "");
   const gen = rows.find((r) => Object.values(r).some((v) => /^\d{2}\/\d{2}\/\d{4}/.test(v)) && Object.values(r).some((v) => /generated/i.test(v)));
   snap.register.generatedOn = toIso(Object.values(gen ?? {}).find((v) => /^\d{2}\/\d{2}\/\d{4}/.test(v)));
   const headerIdx = rows.findIndex((r) => Object.values(r).includes("Category") && Object.values(r).includes("Name of medicine"));
-  if (headerIdx < 0) { snap.errors.push("EMA header row not found"); writeJson(OUT, snap); process.exit(0); }
+  if (headerIdx < 0) throw new Error("EMA header row not found; previous snapshots retained");
   const header = rows[headerIdx];
   const col = (label: RegExp) => Object.entries(header).find(([, v]) => label.test(v))?.[0];
   const C = { cat: col(/^Category/), name: col(/^Name of medicine/), num: col(/^EMA product number/), status: col(/^Medicine status/), opinion: col(/^Opinion status/), inn: col(/^International non-proprietary/), subst: col(/^Active substance/), area: col(/^Therapeutic area/), atc: col(/^ATC code \(human\)/), ind: col(/^Therapeutic indication/), cond: col(/^Conditional approval/), generic: col(/^Generic/), biosimilar: col(/^Biosimilar/), holder: col(/^Marketing authorisation developer/), auth: col(/^Marketing authorisation date/), withdrawn: col(/^Withdrawal \/ expiry/), refused: col(/^Refusal of marketing/), url: col(/^Medicine URL/) };
+  if (!C.status) throw new Error("EMA Medicine status column not found; previous snapshots retained");
   const get = (r: Record<string, string>, k?: string) => (k ? r[k] : undefined);
 
   const ema: EmaRow[] = [];
   for (const r of rows.slice(headerIdx + 1)) {
     if (get(r, C.cat) !== "Human") continue;
-    const name = get(r, C.name); if (!name) continue;
-    ema.push({ name, productNumber: get(r, C.num), status: get(r, C.status) ?? "", opinionStatus: get(r, C.opinion), inn: get(r, C.inn), substance: get(r, C.subst), therapeuticArea: get(r, C.area), atc: get(r, C.atc), conditional: /yes/i.test(get(r, C.cond) ?? ""), generic: /yes/i.test(get(r, C.generic) ?? ""), biosimilar: /yes/i.test(get(r, C.biosimilar) ?? ""), authorised: toIso(get(r, C.auth)), withdrawn: toIso(get(r, C.withdrawn)), refused: toIso(get(r, C.refused)), holder: get(r, C.holder), url: get(r, C.url), indication: get(r, C.ind)?.slice(0, 300) });
+    const name = get(r, C.name), status = get(r, C.status);
+    if (!name || !status) throw new Error("EMA human medicine row lacks a name or status; previous snapshots retained");
+    ema.push({ name, productNumber: get(r, C.num), status, opinionStatus: get(r, C.opinion), inn: get(r, C.inn), substance: get(r, C.subst), therapeuticArea: get(r, C.area), atc: get(r, C.atc), conditional: /yes/i.test(get(r, C.cond) ?? ""), generic: /yes/i.test(get(r, C.generic) ?? ""), biosimilar: /yes/i.test(get(r, C.biosimilar) ?? ""), authorised: toIso(get(r, C.auth)), withdrawn: toIso(get(r, C.withdrawn)), refused: toIso(get(r, C.refused)), holder: get(r, C.holder), url: get(r, C.url), indication: get(r, C.ind)?.slice(0, 300) });
   }
+  // This is the full medicine register, not a query window. No discrepancies is valid;
+  // no readable human medicines is not evidence for replacing either snapshot or its date.
+  if (!ema.length) throw new Error("EMA spreadsheet has no human medicines; previous snapshots retained");
   snap.register.rows = rows.length - headerIdx - 1;
   snap.register.human = ema.length;
   const onco = ema.filter(isOncology);
