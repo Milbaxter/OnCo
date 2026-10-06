@@ -366,4 +366,40 @@ describe("biomarker negation and Boolean scope", () => {
     expect(bm.absent.has("HER2")).toBe(false);
     expect(evaluate(text, "inclusion", ["her2"]).verdict).toBe("unclear");
   });
+
+  it.each([
+    "HER2-positive", "HER2 - positive", "HER2- positive", "HER2 : positive",
+    "HER2-amplified", "HER2 - amplified", "HER2 - expression is positive",
+    "HER2+", "HER2 +", "HER2+ disease",
+  ])("reads explicit positive words before a separating hyphen: %s", (text) => {
+    const bm = profileBiomarkers(["result"], { result: text });
+    expect([...bm.present]).toEqual(["HER2"]);
+    expect(bm.absent.size).toBe(0);
+    expect(tagCriterion(text, "inclusion").biomarkers).toEqual(["HER2"]);
+    expect(tagCriterion(text, "exclusion").biomarkersExcluded).toEqual(["HER2"]);
+    const result = score(parseCriteria("Inclusion Criteria:\n* HER2-positive disease."),
+      { stage: "unknown", biomarkers: ["result"], priorLines: [] },
+      { biomarkerLabels: { result: text }, drugNames: {} });
+    expect(result.verdict).toBe("likely");
+  });
+
+  it.each([
+    "HER2-negative", "HER2 - negative", "HER2 - not detected",
+    "HER2-", "HER2 -", "HER2−", "HER2- disease", "HER2 - disease",
+  ])("preserves negative words and bare minus results: %s", (text) => {
+    const bm = profileBiomarkers(["result"], { result: text });
+    expect(bm.present.size).toBe(0);
+    expect([...bm.absent]).toEqual(["HER2"]);
+    expect(tagCriterion(text, "inclusion").biomarkersExcluded).toEqual(["HER2"]);
+    expect(tagCriterion(text, "exclusion").biomarkers).toEqual(["HER2"]);
+  });
+
+  it.each(["HER2 - not negative", "HER2 - expression is not not detected"])(
+    "does not treat a delimiter as a result before unresolved negation: %s", (text) => {
+      const bm = profileBiomarkers(["result"], { result: text });
+      expect(bm.present.size).toBe(0);
+      expect(bm.absent.size).toBe(0);
+      expect(evaluate(text, "inclusion", ["her2"]).verdict).toBe("unclear");
+      expect(evaluate(text, "exclusion", ["her2"]).verdict).toBe("unclear");
+    });
 });

@@ -203,9 +203,6 @@ type MarkerPolarity = "positive" | "negative" | "unclear";
 
 /** Read one attached result and leave its qualifiers for the caller; profiles and criteria use the same grammar. */
 function markerSuffix(after: string): { polarity: MarkerPolarity; rest: string } | undefined {
-  // A bare sign is a result, but the hyphen in HER2-directed is not.
-  const sign = after.match(/^\s*([+−-])(?=\W|$)/);
-  if (sign) return { polarity: sign[1] === "+" ? "positive" : "negative", rest: after.slice(sign[0].length) };
   const copula = /^(?:is|are|was|were|must be)\s+/i;
   let rest = after.replace(/^\s*(?:[-:]\s*)?/, "").replace(copula, "");
   const attribute = rest.match(/^(mutations?|fusions?|rearrangements?|amplification|expression|status)\b\s*(?:[-:]\s*)?/i);
@@ -220,6 +217,10 @@ function markerSuffix(after: string): { polarity: MarkerPolarity; rest: string }
       && /\b(?:no|not|never|without|absence|lacking|negative|wild[- ]?type)\b/i.test(localRest))) return { polarity: "unclear", rest };
   const positive = rest.match(/^(?:positive|mutated|alterations?|amplified|overexpressed|overexpression|expressed|rearranged|deficient|high)\b/i);
   if (positive) return { polarity: "positive", rest: rest.slice(positive[0].length) };
+  // Explicit words (including unresolved negation) distinguish a separating hyphen from a minus result.
+  // A remaining bare sign is a result, but the hyphen in HER2-directed is not.
+  const sign = after.match(/^\s*([+−-])(?=\W|$)/);
+  if (sign) return { polarity: sign[1] === "+" ? "positive" : "negative", rest: after.slice(sign[0].length) };
   if (attribute && attribute[1].toLowerCase() !== "status") return { polarity: "positive", rest };
   return undefined;
 }
