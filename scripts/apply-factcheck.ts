@@ -11,8 +11,8 @@
  *   npx tsx scripts/apply-factcheck.ts --list                                 # show proposals, change nothing
  *   add --dry-run to print the edits without writing
  *
- * The record is found by its `id: "<id>"` line in src/data; the field is replaced within that record's
- * braces. Records whose field comes from a helper or a spread (for example a status set by a wrapper)
+ * A selected id must identify exactly one literal record across src/data before its own field is
+ * replaced. Records whose field comes from a helper or a spread (for example a status set by a wrapper)
  * are reported as not applied so a human can edit them.
  */
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
@@ -39,21 +39,27 @@ function propertyName(property: ts.ObjectLiteralElementLike): string | undefined
   return name && (ts.isIdentifier(name) || ts.isStringLiteral(name)) ? name.text : undefined;
 }
 
-function parsedRecord(source: string, id: string): { file: ts.SourceFile; record: ts.ObjectLiteralExpression } | null {
+function parsedRecords(source: string): { file: ts.SourceFile; records: Array<{ id: string; record: ts.ObjectLiteralExpression }> } {
   const file = ts.createSourceFile("data.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  const records: ts.ObjectLiteralExpression[] = [];
+  const records: Array<{ id: string; record: ts.ObjectLiteralExpression }> = [];
   const visit = (node: ts.Node) => {
     if (ts.isObjectLiteralExpression(node)) {
       const ids = node.properties.filter((p) => propertyName(p) === "id");
       const ownId = ids[0];
       if (ids.length === 1 && ts.isPropertyAssignment(ownId) && ts.isStringLiteral(ownId.initializer)
-        && ownId.initializer.text === id && node.properties.some((p) => ["name", "kind"].includes(propertyName(p) ?? ""))) records.push(node);
+        && node.properties.some((p) => ["name", "kind"].includes(propertyName(p) ?? ""))) records.push({ id: ownId.initializer.text, record: node });
     }
     ts.forEachChild(node, visit);
   };
   visit(file);
+  return { file, records };
+}
+
+function parsedRecord(source: string, id: string): { file: ts.SourceFile; record: ts.ObjectLiteralExpression } | null {
+  const parsed = parsedRecords(source);
+  const records = parsed.records.filter((r) => r.id === id);
   // Ambiguous identities need a human; never silently edit the first of two copies.
-  return records.length === 1 ? { file, record: records[0] } : null;
+  return records.length === 1 ? { file: parsed.file, record: records[0].record } : null;
 }
 
 /** Find an unambiguous record by its own literal id, independent of formatting. */
@@ -134,18 +140,32 @@ function main() {
   const today = new Date().toISOString().slice(0, 10);
   const files = dataFiles();
   const sources = new Map<string, string>(files.map((f) => [f, readFileSync(f, "utf8")]));
+  // Resolve identities across the complete corpus before changing any source. A second record
+  // still makes the id ambiguous when its field is absent, stale, or supplied by a helper.
+  const selectedIds = new Set(chosen.map((p) => p.id));
+  const locations = new Map<string, string[]>();
+  for (const [f, source] of sources) {
+    for (const { id } of parsedRecords(source).records) {
+      if (!selectedIds.has(id)) continue;
+      const matches = locations.get(id) ?? [];
+      matches.push(f);
+      locations.set(id, matches);
+    }
+  }
   let corrections = readFileSync(join(root, "CORRECTIONS.md"), "utf8");
   const applied: Patch[] = [];
   for (const p of chosen) {
-    let done = false;
-    for (const f of files) {
-      const src = sources.get(f)!;
-      if (!src.includes(p.id)) continue;
-      const r = applyPatchToSource(src, p, today);
-      if (r.applied) { sources.set(f, r.source); console.log(`applied ${p.id}.${p.field}: "${p.current}" -> "${p.proposed}" in ${relative(root, f)}`); done = true; break; }
-      if (r.reason && !r.reason.startsWith("record not found")) console.warn(`skipped ${p.id}.${p.field}: ${r.reason} (${relative(root, f)})`);
+    const matches = locations.get(p.id) ?? [];
+    if (matches.length > 1) {
+      console.warn(`not applied ${p.id}.${p.field}: record id is ambiguous (${matches.length} records in ${[...new Set(matches)].map((f) => relative(root, f)).join(", ")}); edit by hand`);
+      continue;
     }
-    if (!done) { console.warn(`not applied ${p.id}.${p.field}: no inline field found in src/data`); continue; }
+    if (!matches.length) { console.warn(`not applied ${p.id}.${p.field}: no record found in src/data`); continue; }
+    const f = matches[0];
+    const r = applyPatchToSource(sources.get(f)!, p, today);
+    if (!r.applied) { console.warn(`not applied ${p.id}.${p.field}: ${r.reason} (${relative(root, f)})`); continue; }
+    sources.set(f, r.source);
+    console.log(`applied ${p.id}.${p.field}: "${p.current}" -> "${p.proposed}" in ${relative(root, f)}`);
     applied.push(p);
     const route = p.route;
     corrections = appendCorrection(corrections, today, `| ${today} | [${p.id}](${route}) | \`${p.field}\` was "${p.current}"; the registry says ${p.registryValue}. | Weekly registry fact check ([source](${p.source})) | set to "${p.proposed}" via apply-factcheck |`);
@@ -155,7 +175,7 @@ function main() {
   if (applied.length) writeFileSync(join(root, "CORRECTIONS.md"), corrections);
   // Drop applied patches from the proposals file so the next run starts clean.
   const remaining = file.patches.filter((p) => !applied.includes(p));
-  writeFileSync(path, JSON.stringify({ ...file, patches: remaining }, null, 0));
+  if (applied.length) writeFileSync(path, JSON.stringify({ ...file, patches: remaining }, null, 0));
   console.log(`${applied.length} patches applied, ${remaining.length} remain. Run npm run validate, then commit with the CORRECTIONS.md rows.`);
 }
 
