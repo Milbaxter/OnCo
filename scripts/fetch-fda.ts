@@ -14,11 +14,14 @@
  * Writes public/fda/recent.json. Run: npx tsx scripts/fetch-fda.ts   Weekly via .github/workflows/refresh-fda.yml.
  */
 import { graph } from "../src/lib/graph";
-import { FDA_OCE_URL, NameMatcher, getJson, getText, isoDaysAgo, matchableFromGraph, parseOcePage, publicPath, readJson, sleep, today, writeJson } from "./feed-utils";
+import { renameSync, rmSync } from "node:fs";
+import { FDA_OCE_URL, NameMatcher, UA, getText, isoDaysAgo, matchableFromGraph, parseOcePage, publicPath, readJson, sleep, today, writeJson } from "./feed-utils";
 import { isSupportiveIndication } from "../src/lib/supportive-care";
 
 const WINDOW_DAYS = Number(process.argv.find((a) => a.startsWith("--days="))?.slice(7) ?? 120);
 const OUT = publicPath("fda", "recent.json");
+const PAGE_SIZE = 100;
+const MAX_PAGES = 30;
 
 /** `supportive` is true when the notification text reads as supportive care under the rule in src/lib/supportive-care.ts (symptom control, toxicity rescue or prophylaxis, infection prophylaxis, no antitumour purpose); a record written from it belongs in src/data/supportive-drugs.ts. */
 export type OceApproval = { date: string; title: string; url: string; summary: string; drugIds: string[]; cancerIds: string[]; firstSeen: string; supportive?: boolean };
@@ -39,13 +42,44 @@ type DrugsFdaResult = {
   submissions?: Array<{ submission_type?: string; submission_number?: string; submission_status?: string; submission_status_date?: string; submission_class_code?: string; submission_class_code_description?: string }>;
 };
 
+/** Unlike the shared nullable loader, retain the HTTP status to distinguish an empty search from a failed request. */
+async function drugsFdaPage(url: string, skip: number): Promise<{ total: number; results: DrugsFdaResult[] }> {
+  let response: Response | undefined;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      response = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" }, signal: AbortSignal.timeout(60_000) });
+    } catch (error) {
+      if (attempt === 3) throw new Error(`openFDA request failed at offset ${skip}`, { cause: error });
+      await sleep(1000 * (attempt + 1));
+      continue;
+    }
+    if (response.status !== 429 && response.status < 500) break;
+    if (attempt === 3) throw new Error(`openFDA HTTP ${response.status} at offset ${skip}`);
+    await sleep(1500 * (attempt + 1));
+  }
+  if (!response) throw new Error(`openFDA request failed at offset ${skip}`);
+  const body = await response.json() as { error?: { code?: string; message?: string }; meta?: { results?: { total?: number; skip?: number; limit?: number } }; results?: DrugsFdaResult[] } | null;
+  // FDA's API returns this exact 404 for an empty search. It cannot complete a later page that was promised by total.
+  // https://github.com/FDA/openfda/blob/fdbe54327901a0c1e30130d1d6a2bbe67b79b77c/api/faers/api.js#L723-L727
+  if (response.status === 404 && skip === 0 && body?.error?.code === "NOT_FOUND" && body.error.message === "No matches found!") return { total: 0, results: [] };
+  if (!response.ok) throw new Error(`openFDA HTTP ${response.status} at offset ${skip}`);
+  const meta = body?.meta?.results;
+  const total = meta?.total;
+  // These counts concern fetched applications, not the smaller number of matching corpus submissions.
+  // https://open.fda.gov/apis/anatomy-of-a-response/
+  if (typeof total !== "number" || !Number.isSafeInteger(total) || total < skip || meta?.skip !== skip || meta.limit !== PAGE_SIZE
+    || !Array.isArray(body?.results) || body.results.length !== Math.min(PAGE_SIZE, total - skip)) throw new Error(`Incomplete openFDA page at offset ${skip}`);
+  if (total > PAGE_SIZE * MAX_PAGES) throw new Error(`openFDA has ${total} applications; the ${PAGE_SIZE * MAX_PAGES}-application refresh cap cannot cover them`);
+  return { total, results: body.results };
+}
+
 /** "granted accelerated approval to sevabertinib (Hyrnuo, Bayer ...)" -> "sevabertinib" */
 function genericFromSummary(summary: string): string | undefined {
   const m = summary.match(/(?:approv(?:ed|al)(?: to| for| of)?|authori[sz]ed|cleared|granted [a-z ]*approval (?:to|for))\s+((?:[a-z][a-z0-9-]+\s?){1,4}?)\s*\(/i);
   return m?.[1]?.trim();
 }
 
-async function main() {
+export async function refreshFda() {
   const g = graph();
   const matcher = new NameMatcher(matchableFromGraph(g.entities as never), ["drug", "cancer"]);
   const prev = readJson<FdaSnapshot>(OUT);
@@ -58,9 +92,12 @@ async function main() {
 
   // (a) OCE approval notifications.
   const html = await getText(FDA_OCE_URL, { accept: "text/html" });
-  if (!html) snap.errors.push("FDA OCE page unreachable");
+  if (!html) throw new Error("FDA OCE page unreachable");
   else {
-    const items = parseOcePage(html).filter((i) => i.date >= from);
+    const parsed = parseOcePage(html);
+    // Historical rows establish that the source parsed. An empty current window is valid; unrecognised HTML is not.
+    if (!parsed.length) throw new Error("FDA OCE page contained no parseable notices");
+    const items = parsed.filter((i) => i.date >= from);
     for (const it of items) {
       const text = `${it.title} ${it.summary}`;
       const ids = matcher.match(text);
@@ -78,13 +115,16 @@ async function main() {
   const fromCompact = from.replace(/-/g, ""), toCompact = fetched.replace(/-/g, "");
   const search = `submissions.submission_status_date:[${fromCompact}+TO+${toCompact}]+AND+submissions.submission_status:AP`;
   let skip = 0, pages = 0, total = 0;
+  const seenApplications = new Set<string>();
   for (;;) {
-    const url = `https://api.fda.gov/drug/drugsfda.json?search=${search}&limit=100&skip=${skip}`;
-    const json = await getJson<{ meta?: { results?: { total?: number } }; results?: DrugsFdaResult[] }>(url);
+    const url = `https://api.fda.gov/drug/drugsfda.json?search=${search}&limit=${PAGE_SIZE}&skip=${skip}`;
+    const json = await drugsFdaPage(url, skip);
     await sleep(400);
-    if (!json) { if (pages === 0) snap.errors.push("openFDA drugsfda unreachable"); break; }
-    total = json.meta?.results?.total ?? 0;
-    for (const app of json.results ?? []) {
+    if (pages > 0 && json.total !== total) throw new Error("openFDA total changed during pagination");
+    total = json.total;
+    for (const app of json.results) {
+      if (!app || typeof app.application_number !== "string" || !app.application_number || seenApplications.has(app.application_number)) throw new Error(`Invalid or repeated openFDA application at offset ${skip}`);
+      seenApplications.add(app.application_number);
       const names = new Set<string>();
       for (const p of app.products ?? []) { if (p.brand_name) names.add(p.brand_name); for (const a of p.active_ingredients ?? []) if (a.name) names.add(a.name); }
       for (const n of app.openfda?.generic_name ?? []) names.add(n);
@@ -103,14 +143,17 @@ async function main() {
         });
       }
     }
-    skip += 100; pages++;
-    if (skip >= total || pages >= 30) break;
+    skip += json.results.length; pages++;
+    if (skip === total) break;
   }
   snap.drugsfda.sort((a, b) => b.statusDate.localeCompare(a.statusDate));
   console.log(`fda: drugsfda ${total} applications with approvals in window; ${snap.drugsfda.length} submissions for corpus products`);
 
-  writeJson(OUT, snap);
+  // Nothing touches the prior snapshot until both sources are complete. Rename also preserves it if writing fails.
+  const temporary = `${OUT}.${process.pid}.tmp`;
+  try { writeJson(temporary, snap); renameSync(temporary, OUT); }
+  finally { rmSync(temporary, { force: true }); }
   console.log(`fda: wrote ${OUT}`);
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+if (process.argv[1]?.endsWith("fetch-fda.ts")) refreshFda().catch((e) => { console.error("FDA refresh failed; snapshot was not replaced.", e); process.exit(1); });
