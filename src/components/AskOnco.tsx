@@ -32,15 +32,15 @@ export function AskOnco({ examples }: { examples: AskExample[] }) {
   const [state, setState] = useState<State>({ status: "idle" });
   const [copied, setCopied] = useState(false);
   const { region } = useRegion();
-  const latest = useRef("");
+  const latest = useRef(0);
+  const invalidate = useCallback(() => { latest.current++; }, []);
   const regionRef = useRef(region);
   useEffect(() => { regionRef.current = region; }, [region]);
 
   const ask = useCallback(async (question: string, pin?: string) => {
     const value = question.trim();
-    latest.current = value + (pin ?? "");
+    const key = ++latest.current;
     if (!value) { setState({ status: "idle" }); return; }
-    const key = latest.current;
     setState({ status: "working", step: "Loading indexes" });
     try {
       const [{ ms }, semantic, index] = await Promise.all([loadSearch(), loadSemantic(), loadAskIndex()]);
@@ -58,7 +58,7 @@ export function AskOnco({ examples }: { examples: AskExample[] }) {
       if (latest.current !== key) return;
       setState({ status: "done", result });
     } catch (e) {
-      setState({ status: "error", message: e instanceof Error ? e.message : "Something went wrong" });
+      if (latest.current === key) setState({ status: "error", message: e instanceof Error ? e.message : "Something went wrong" });
     }
   }, []);
 
@@ -68,8 +68,8 @@ export function AskOnco({ examples }: { examples: AskExample[] }) {
       const initial = p.get("q") ?? "";
       if (initial) { setQ(initial); ask(initial, p.get("about") ?? undefined); }
     });
-    return () => cancelAnimationFrame(id);
-  }, [ask]);
+    return () => { cancelAnimationFrame(id); invalidate(); };
+  }, [ask, invalidate]);
 
   const submit = (value: string, pin?: string) => {
     setQ(value);

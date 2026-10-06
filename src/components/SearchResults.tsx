@@ -219,7 +219,7 @@ export function SearchResults() {
       const items: Neighbour[] = [];
       outer: for (const list of Object.values(rec.neighbours ?? {})) for (const n of list) { if (seen.has(n.id)) continue; seen.add(n.id); items.push(n); if (items.length >= RELATED_MAX) break outer; }
       setRelated({ of: top, items });
-    });
+    }).catch(() => { /* The optional related strip must not turn a failed record fetch into an unhandled rejection. */ });
     return () => { live = false; };
   }, [top, phase]);
   // Only the strip for the current top hit is shown; a strip fetched for an earlier query stays hidden.
