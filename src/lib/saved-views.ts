@@ -19,7 +19,8 @@ export type SavedView = {
   savedOn: string;
 };
 
-const KEY = "onco:saved-views:v1";
+export const SAVED_VIEWS_KEY = "onco:saved-views:v1";
+const KEY = SAVED_VIEWS_KEY;
 const EVENT = "onco:saved-views";
 
 export function loadViews(): SavedView[] {
@@ -33,6 +34,11 @@ export function loadViews(): SavedView[] {
 
 function persist(list: SavedView[]) {
   window.localStorage.setItem(KEY, JSON.stringify(list));
+  announceSavedViews(list);
+}
+
+/** Notify this page after saved-view writes succeed. */
+export function announceSavedViews(list: SavedView[]) {
   window.dispatchEvent(new CustomEvent(EVENT, { detail: list }));
 }
 
@@ -42,12 +48,17 @@ export function currentViewUrl(): string {
   return window.location.pathname + window.location.search + window.location.hash;
 }
 
-export function saveView(input: { name: string; url?: string; noun?: string; count?: number }): SavedView {
+/** Apply the normal save rules without writing, so imports can stage the complete list. */
+export function withSavedView(list: SavedView[], input: { name: string; url?: string; noun?: string; count?: number }): SavedView[] {
   const url = input.url ?? currentViewUrl();
-  const list = loadViews().filter((v) => v.url !== url);
   const view: SavedView = { id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`, name: input.name.trim() || url, url, noun: input.noun, count: input.count, savedOn: new Date().toISOString().slice(0, 10) };
-  persist([view, ...list].slice(0, 200));
-  return view;
+  return [view, ...list.filter((v) => v.url !== url)].slice(0, 200);
+}
+
+export function saveView(input: { name: string; url?: string; noun?: string; count?: number }): SavedView {
+  const list = withSavedView(loadViews(), input);
+  persist(list);
+  return list[0];
 }
 
 export function removeView(id: string) {

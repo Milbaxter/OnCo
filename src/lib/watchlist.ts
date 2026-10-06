@@ -18,7 +18,8 @@ export type WatchItem = {
   seen: { asOf?: string; edited?: string; on: string };
 };
 
-const KEY = "onco:watchlist:v1";
+export const WATCHLIST_KEY = "onco:watchlist:v1";
+const KEY = WATCHLIST_KEY;
 const EVENT = "onco:watchlist";
 
 export function loadWatchlist(): WatchItem[] {
@@ -35,6 +36,13 @@ export function loadWatchlist(): WatchItem[] {
 let memory: WatchItem[] | null = null;
 export let storageBlocked = false;
 
+/** Accept a successfully persisted import without running the visit-only fallback. */
+export function acceptStoredWatchlist(list: WatchItem[]) {
+  memory = list;
+  storageBlocked = false;
+  window.dispatchEvent(new CustomEvent(EVENT, { detail: list }));
+}
+
 function persist(list: WatchItem[]) {
   memory = list;
   try { window.localStorage.setItem(KEY, JSON.stringify(list)); storageBlocked = false; }
@@ -47,10 +55,16 @@ export const isWatched = (id: string) => loadWatchlist().some((w) => w.id === id
 /** Replace the whole list (used when merging an account's list into this browser). */
 export function replaceWatchlist(list: WatchItem[]) { persist(list.filter((w) => w && typeof w.id === "string")); }
 
-export function watch(item: Omit<WatchItem, "addedOn" | "seen"> & { asOf?: string; edited?: string }) {
+type WatchInput = Omit<WatchItem, "addedOn" | "seen"> & { asOf?: string; edited?: string };
+
+/** Apply the normal watch rules without changing storage or the visit-only copy. */
+export function withWatchItem(list: WatchItem[], item: WatchInput): WatchItem[] {
   const today = new Date().toISOString().slice(0, 10);
-  const list = loadWatchlist().filter((w) => w.id !== item.id);
-  persist([{ id: item.id, kind: item.kind, name: item.name, route: item.route, addedOn: today, seen: { asOf: item.asOf, edited: item.edited, on: today } }, ...list].slice(0, 500));
+  return [{ id: item.id, kind: item.kind, name: item.name, route: item.route, addedOn: today, seen: { asOf: item.asOf, edited: item.edited, on: today } }, ...list.filter((w) => w.id !== item.id)].slice(0, 500);
+}
+
+export function watch(item: WatchInput) {
+  persist(withWatchItem(loadWatchlist(), item));
 }
 
 export function unwatch(id: string) {

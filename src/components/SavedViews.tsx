@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { describeQuery, loadViews, removeView, renameView, saveView, useSavedViews } from "@/lib/saved-views";
-import { changedSince, fetchEntityDates, loadWatchlist, markSeen, unwatch, useWatchlist, watch, type WatchItem } from "@/lib/watchlist";
+import { describeQuery, loadViews, removeView, renameView, useSavedViews } from "@/lib/saved-views";
+import { changedSince, fetchEntityDates, loadWatchlist, markSeen, unwatch, useWatchlist, type WatchItem } from "@/lib/watchlist";
+import { importSavedData, SavedImportStorageError } from "@/lib/saved-import";
 import { download } from "@/lib/csv";
 import { KIND_META, type Kind } from "@/lib/kinds";
 import { KIND_COLOR } from "@/lib/text";
@@ -59,12 +60,9 @@ export function SavedViews() {
   const importFile = async (f: File | undefined) => {
     if (!f) return;
     try {
-      const j = JSON.parse(await f.text()) as { views?: Array<{ name: string; url: string; noun?: string; count?: number }>; watchlist?: WatchItem[] };
-      let n = 0;
-      for (const v of j.views ?? []) if (v && typeof v.url === "string") { saveView({ name: v.name, url: v.url, noun: v.noun, count: v.count }); n++; }
-      for (const w of j.watchlist ?? []) if (w && typeof w.id === "string") { watch({ id: w.id, kind: w.kind, name: w.name, route: w.route, asOf: w.seen?.asOf, edited: w.seen?.edited }); n++; }
+      const n = importSavedData(await f.text());
       setImportMsg(`Imported ${n} item${n === 1 ? "" : "s"}.`);
-    } catch { setImportMsg("That file could not be read. Export from another browser first, then import the file here."); }
+    } catch (error) { setImportMsg(error instanceof SavedImportStorageError ? error.message : "That file could not be read. Export from another browser first, then import the file here."); }
   };
 
   const ready = viewsReady && watchReady;
