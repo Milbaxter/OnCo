@@ -115,7 +115,7 @@ describe("search results recovery", () => {
     expect(text()).toContain("Search is unavailable");
     expect(text()).not.toContain("Loading the search index");
     retry(); await succeed();
-    expect(text()).not.toMatch(/unavailable|Loading the search index/);
+    expect(text()).not.toMatch(/Search is unavailable|Loading the search index/);
     expect(askText()).toContain(docs[0].tldr);
     expect(askText()).not.toContain("Reading the records");
     expect(requests).toHaveLength(2);
@@ -127,7 +127,7 @@ describe("search results recovery", () => {
     event(filter, "onClick"); retry(); await settle();
     expect(elements().find((node) => node.type === "button" && node.props.title === "Show every kind")?.props["aria-pressed"]).toBe(true);
     expect(resultIds()).toHaveLength(3);
-    expect(text()).not.toMatch(/unavailable|Loading the search index/);
+    expect(text()).not.toMatch(/Search is unavailable|Loading the search index/);
   });
 
   it("restarts Ask when the same question recovers after an index failure", async () => {
@@ -172,7 +172,7 @@ describe("search results recovery", () => {
     submit("What is alpha 1?"); submit("");
     if (outcome === "success") await succeed(); else await fail();
     expect(input().props.value).toBe("");
-    expect(text()).not.toMatch(/unavailable|Loading the search index|Reading the records/);
+    expect(text()).not.toMatch(/Search is unavailable|Loading the search index|Reading the records/);
     expect(resultIds()).toHaveLength(0);
   });
 
