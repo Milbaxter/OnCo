@@ -290,4 +290,51 @@ describe("biomarker negation and Boolean scope", () => {
     expect(tagCriterion(text, "exclusion").biomarkersExcluded).toEqual(expect.arrayContaining(["HR-positive", "HER2"]));
     expect(evaluate(text, "exclusion", ["hr"]).verdict).toBe("unlikely");
   });
+
+  it.each([
+    "No detectable HER2 expression.",
+    "Without detectable HER2 expression.",
+    "No clear evidence of HER2 expression.",
+    "HER2 expression not detected.",
+    "HER2 is not expressed.",
+  ])("recognises explicit negation without treating expression as a positive result: %s", (text) => {
+    expect(tagCriterion(text, "inclusion").biomarkersExcluded).toEqual(["HER2"]);
+    expect(evaluate(text, "inclusion", ["her2"]).verdict).toBe("unlikely");
+    expect(evaluate(text, "inclusion", ["noHer2"]).verdict).toBe("likely");
+    expect(profileBiomarkers(["result"], { result: text }).absent.has("HER2")).toBe(true);
+  });
+
+  it.each([
+    "No definitive laboratory confirmation of HER2 expression.",
+    "Not without evidence of HER2 expression.",
+  ])("leaves an unsupported local negation construction unresolved: %s", (text) => {
+    expect(evaluate(text, "inclusion", ["noHer2"]).verdict).toBe("unclear");
+    expect(profileBiomarkers(["result"], { result: text }).present.size).toBe(0);
+  });
+
+  it.each([
+    "HER2-positive or not PIK3CA-mutated.",
+    "HER2-positive or PIK3CA not mutated.",
+    "HER2-positive or PIK3CA is not mutated.",
+  ])("does not flatten a negated exclusion alternative: %s", (text) => {
+    const result = score(parseCriteria(`Exclusion Criteria:\n* ${text}`),
+      { stage: "unknown", biomarkers: ["noHer2", "pik3ca"], priorLines: [] },
+      { biomarkerLabels: { ...labels, pik3ca: "PIK3CA-mutated" }, drugNames: {} });
+    expect(result.verdict).toBe("unclear");
+    expect(result.checklist[0].status).toBe("unknown");
+  });
+
+  it.each([
+    "HER2-positive disease with brain metastases or HR-positive disease.",
+    "HER2-positive disease with brain metastases.",
+    "HER2-positive disease that is unresectable or metastatic.",
+    "HER2-positive disease in previously treated participants.",
+    "HER2-positive disease with squamous histology or HR-positive disease.",
+  ])("does not drop a qualifier from an excluded marker predicate: %s", (text) => {
+    const result = score(parseCriteria(`Exclusion Criteria:\n* ${text}`),
+      { stage: "unknown", biomarkers: ["her2", "noHr"], priorLines: [] },
+      { biomarkerLabels: { ...labels, noHr: "HR-negative" }, drugNames: {} });
+    expect(result.verdict).toBe("unclear");
+    expect(result.checklist[0].status).toBe("unknown");
+  });
 });

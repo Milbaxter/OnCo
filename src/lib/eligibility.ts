@@ -198,6 +198,7 @@ export const THERAPY_PATTERNS: Array<[string, RegExp]> = [
 
 const NEGATIVE_BM = /(negative|wild[- ]?type|\bWT\b|without|lacking|absence of|no (?:known )?(?:[A-Za-z0-9-]+\s){0,3}(?:mutation|alteration|amplification|expression|rearrangement|fusion))/i;
 const REQUIRED_CUE = /(positive|\+\b|mutat|alteration|amplif|overexpress|express|rearrang|fusion|documented|confirmed|known|deficien|high|≥|>=|status)/i;
+const NEGATED_MARKER_PREFIX = /\b(?:(?:no|without)(?:\s+(?:any|known|detectable|documented|confirmed|clear))*(?:\s+evidence\s+of)?|(?:absence|lack)\s+of|lacking|negative\s+for|not)\s*$/i;
 
 /** Read an explicit result attached to this marker before considering sentence-wide wording. */
 function markerPolarity(text: string, name: string, pattern: RegExp): "positive" | "negative" | "unclear" | undefined {
@@ -207,17 +208,21 @@ function markerPolarity(text: string, name: string, pattern: RegExp): "positive"
   const before = text.slice(0, match.index);
   // The absence applies to this marker even when its following word is "expression" or "amplification".
   // Keep the prefix anchored: "without distant metastases, HER2-positive" must still mean HER2-positive.
-  const negated = /\b(?:negative for|without(?: (?:any )?evidence of)?|absence of|lacking|no(?: known| (?:any )?evidence of)?)\s*$/i.test(before);
+  const negated = NEGATED_MARKER_PREFIX.test(before);
+  const localBefore = before.split(/[,;:.]|\b(?:and|or|but)\b/i).at(-1) ?? "";
+  // An unrecognised negation construction must not fall through to a nearby positive cue.
+  if (/\b(?:no|not|without|absence|lacking|negative for|lack of)\b/i.test(localBefore.replace(NEGATED_MARKER_PREFIX, ""))) return "unclear";
+  if (/^\s*(?:[-:]\s*)?(?:(?:is|are|was|were|must be)\s+)?not\s+(?:negative|wild[- ]?type)\b/i.test(after)) return "unclear";
   // A trailing minus is a result only at a word boundary, not the hyphen in e.g. HER2-directed.
   if (name === "HR-negative"
-    || /^\s*(?:[-:]\s*)?(?:(?:mutations?|fusions?|rearrangements?|amplification|expression|status)\s*[-:]?\s*)?(?:negative\b|wild[- ]?type\b|WT\b|not detected\b|loss\b)/i.test(after)
+    || /^\s*(?:[-:]\s*)?(?:(?:is|are|was|were|must be)\s+)?(?:(?:mutations?|fusions?|rearrangements?|amplification|expression|status)\s*[-:]?\s*)?(?:negative\b|wild[- ]?type\b|WT\b|not (?:detected|mutated|amplified|expressed|overexpressed|rearranged|positive)\b|loss\b)/i.test(after)
     || /^\s*[-−](?=\W|$)/.test(after)
   ) return negated ? "unclear" : "negative";
   // Absence of HER2-low does not establish HER2-positive or HER2-negative.
   if (name === "HER2" && /^[- ]low\b/i.test(after)) return negated ? "unclear" : "negative";
   if (negated) return "negative";
   if (name === "HR-positive" || name === "HER2-low" || name === "Triple-negative") return "positive";
-  if (/^\s*(?:[-:]\s*)?(?:positive\b|mutat|amplif|overexpress|express|rearrang|fusion|deficien|high\b)/i.test(after)
+  if (/^\s*(?:[-:]\s*)?(?:(?:is|are|was|were|must be)\s+)?(?:positive\b|mutat|alteration|amplif|overexpress|express|rearrang|fusion|deficien|high\b)/i.test(after)
     || /^\s*\+(?=\W|$)/.test(after)
     || /positive for\s*$/i.test(before)) return "positive";
   return undefined;
@@ -233,14 +238,18 @@ function biomarkerMentions(text: string): Array<{ start: number; end: number }> 
   return mentions;
 }
 
-/** Only remove recognised annotations and simple relative modifiers, never an alternative disease branch. */
-function biomarkerLogicText(text: string): string {
+/** Recognised assay notation describes a marker result; it is not an alternative eligibility branch. */
+function withoutAssayAnnotations(text: string): string {
   const assayResult = /^(?:(?:IHC|ISH)\s*)?(?:[0-3]\+?(?:\s*\/\s*ISH\s*[-−+])?|amplified|negative|positive)$/i;
-  const withoutAssays = text.replace(/\(([^()]*)\)/g, (whole, inner: string) =>
+  return text.replace(/\(([^()]*)\)/g, (whole, inner: string) =>
     /^\s*(?:IHC|ISH)\b/i.test(inner) && inner.split(/\s*,\s*|\s+or\s+/i).every((part) => assayResult.test(part.trim())) ? " " : whole);
+}
+
+/** Inclusion can require a marker while allowing alternatives inside an attached relative modifier. */
+function biomarkerLogicText(text: string): string {
   // "HER2-positive cancer that is unresectable or metastatic" asserts HER2 outside the relative clause.
   // More elaborate relative clauses remain unresolved rather than guessing the scope of their connectors.
-  return withoutAssays.replace(/\b(?:that|which)\s+(?:is|are)\s+[a-z-]+(?:\s+(?:or|and)\s+[a-z-]+)+[.;]?\s*$/i,
+  return withoutAssayAnnotations(text).replace(/\b(?:that|which)\s+(?:is|are)\s+[a-z-]+(?:\s+(?:or|and)\s+[a-z-]+)+[.;]?\s*$/i,
     (clause) => biomarkerMentions(clause).length ? clause : "");
 }
 
@@ -249,13 +258,24 @@ function hasBiomarkerAlternatives(text: string): boolean {
   return biomarkerMentions(text).length > 0 && /\bor\b/i.test(biomarkerLogicText(text));
 }
 
-/** NOT(A OR B) can be flattened only when every branch is one explicit positive result. */
-function simplePositiveAlternatives(text: string): boolean {
-  const branches = biomarkerLogicText(text).split(/\bor\b/i);
-  return branches.length > 1 && branches.every((branch) => {
-    if (/\band\b|[,;]/i.test(branch) || biomarkerMentions(branch).length !== 1) return false;
+/**
+ * Exclusion needs the entire predicate, not just one recognised word in it. Accept only a small grammar
+ * of marker assertions, with no residual histology, spread, stage or other condition. A conjunction,
+ * qualified branch or unknown wording stays unresolved. NOT(A OR B) is flattened only for positive atoms.
+ */
+function simpleMarkerExclusion(text: string): boolean {
+  const branches = withoutAssayAnnotations(text).split(/\bor\b/i);
+  return branches.every((branch) => {
+    if (biomarkerMentions(branch).length !== 1) return false;
     const marker = BIOMARKER_PATTERNS.find(([, pattern]) => pattern.test(branch));
-    return marker !== undefined && markerPolarity(branch, ...marker) === "positive";
+    if (!marker) return false;
+    const match = marker[1].exec(branch)!;
+    const before = branch.slice(0, match.index).replace(NEGATED_MARKER_PREFIX, "");
+    const after = branch.slice(match.index + match[0].length);
+    const prefix = /^\s*(?:(?:patients?|participants?|subjects?)\s+(?:with\s+)?)?(?:(?:known|documented|confirmed)\s+|(?:presence|evidence)\s+of\s+)?$/i;
+    const suffix = /^\s*(?:[-:]\s*)?(?:(?:is|are|was|were|must be)\s+)?(?:(?:mutations?|fusions?|rearrangements?|amplification|expression|status)\s*[-:]?\s*)?(?:positive|negative|wild[- ]?type|WT|not (?:detected|mutated|amplified|expressed|overexpressed|rearranged|positive)|loss|mutations?|mutated|alterations?|amplified|amplification|overexpressed|overexpression|expressed|expression|rearranged|rearrangements?|fusions?|deficient|high|[+−-])?\s*(?:disease|cancers?|tumou?rs?)?\s*\.?\s*$/i;
+    const polarity = markerPolarity(branch, ...marker);
+    return prefix.test(before) && suffix.test(after) && (polarity === "positive" || (branches.length === 1 && polarity === "negative"));
   });
 }
 
@@ -303,9 +323,7 @@ export function tagCriterion(text: string, kind: CriterionKind): CriterionTags {
   const alternatives = hasBiomarkerAlternatives(s);
   // NOT(A AND B) cannot be expressed by requiring NOT A and NOT B. Leave combined exclusions
   // for the team; only a list of positive alternatives has the existing exclude-each interpretation.
-  const combinedExclusion = kind === "exclusion" && found.length > 0
-    && (biomarkerMentions(s).length > 1 || alternatives || /\band\b/i.test(biomarkerLogicText(s)))
-    && !simplePositiveAlternatives(s);
+  const combinedExclusion = kind === "exclusion" && found.length > 0 && !simpleMarkerExclusion(s);
   if ((kind === "inclusion" && alternatives) || combinedExclusion
     || found.some(([name, pattern]) => markerPolarity(s, name, pattern) === "unclear")) t.biomarkersUnclear = true;
   else if (found.length) {
