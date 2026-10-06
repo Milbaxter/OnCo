@@ -67,6 +67,7 @@ async function main() {
     snap.sites[slug] = site;
     console.log(`  ${slug}: ${site.overall?.pct ?? "?"}% (${site.overall?.period ?? "?"}), ${site.byStage.length} stage rows`);
   }
+  if (snap.failed.length) throw new Error(`survival: incomplete refresh (${snap.failed.join(", ")}); snapshot not written`);
   writeJson(OUT, snap, true);
   console.log(`survival: ${Object.keys(snap.sites).length} sites, ${snap.failed.length} failed -> ${OUT}`);
 }
