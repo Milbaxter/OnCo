@@ -33,6 +33,25 @@ describe("registry identity gates patch proposals", () => {
     expect(result.patches).toEqual([]);
   });
 
+  it.each([
+    ["ASCENT", "ASCENT-03"],
+    ["ASCENT", "ASCENT 03"],
+    ["ALPHA-123", "ALPHA-123-2"],
+    ["ALPHA-123", "ALPHA-123 - 2"],
+    ["ALPHA-123", "ALPHA 123 2"],
+    ["ALPHA-123", "ALPHA-123/2"],
+    ["ALPHA-123", "ALPHA-123_2"],
+    ["ALPHA-123", "ALPHA-123.2"],
+    ["ALPHA-123", "ALPHA-123:2"],
+    ["ALPHA-123", "ALPHA-123–2"],
+    ["ALPHA-123", "ALPHA-123-EXT"],
+    ["ALPHA-123", "PREFIX/ALPHA-123"],
+  ])("holds patches when %s is only part of identifier %s", (name, acronym) => {
+    const result = checkRegistryTrial({ ...trial, name }, { ...registry, identificationModule: { acronym } }, "2026-10-05");
+    expect(result.patches).toEqual([]);
+    expect(result.mismatches.map((m) => m.check)).toEqual(["nct-title-mismatch"]);
+  });
+
   it("does not identify a descriptive trial title by its drug or disease alone", () => {
     const source = { ...trial, name: "Atezolizumab with nab-paclitaxel in breast cancer" };
     const other = { ...registry, identificationModule: { briefTitle: "Atezolizumab with radiotherapy in breast cancer" } };
@@ -83,6 +102,30 @@ describe("registry identity gates patch proposals", () => {
     expect(checkRegistryTrial(source, titled, "2026-10-05").patches).toHaveLength(3);
     const named = { ...registry, identificationModule: { briefTitle: "Study of pembrolizumab (ALPHA 123)" } };
     expect(checkRegistryTrial({ ...trial, name: "ALPHA-123 (primary analysis)" }, named, "2026-10-05").patches).toHaveLength(3);
+  });
+
+  it("matches a complete title containing an internal parenthetical", () => {
+    const name = "4SC-201 (Resminostat) and Sorafenib in Advanced Hepatocellular Carcinoma";
+    const matched = { ...registry, identificationModule: { officialTitle: name } };
+    const result = checkRegistryTrial({ ...trial, name }, matched, "2026-10-05");
+    expect(result.patches).toHaveLength(3);
+    expect(result.mismatches.map((m) => m.check)).not.toContain("nct-title-mismatch");
+  });
+
+  it.each(["(ALPHA-123)", "ALPHA-123: A study of pembrolizumab", "Study ALPHA-123.", "Trial ALPHA 123 (primary analysis)"])("retains surrounding title punctuation in %s", (briefTitle) => {
+    const result = checkRegistryTrial(trial, { ...registry, identificationModule: { briefTitle } }, "2026-10-05");
+    expect(result.patches).toHaveLength(3);
+    expect(result.mismatches.map((m) => m.check)).not.toContain("nct-title-mismatch");
+  });
+
+  it.each(["OAK", "IoN"])("accepts the short trial name %s when it matches a complete registry field", (name) => {
+    const matched = { ...registry, identificationModule: { acronym: name } };
+    expect(checkRegistryTrial({ ...trial, name }, matched, "2026-10-05").patches).toHaveLength(3);
+  });
+
+  it("does not identify IoN by an isolated word in a different study title", () => {
+    const other = { ...registry, identificationModule: { briefTitle: "Ion beam therapy for prostate cancer" } };
+    expect(checkRegistryTrial({ ...trial, name: "IoN" }, other, "2026-10-05").patches).toEqual([]);
   });
 
   it("withholds patches when a response provides no identity evidence", () => {

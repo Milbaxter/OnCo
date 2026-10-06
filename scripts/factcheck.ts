@@ -130,16 +130,24 @@ const compact = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
  * Require a complete trial name or alias in a registry title, acronym or protocol id. Punctuation
  * and spacing may differ ("KEYNOTE-522" matches "KEYNOTE 522"), but a family name, shared drug or
  * other isolated word cannot identify a study. Match within each field and keep word boundaries:
- * "KEYNOTE-522" must not match "KEYNOTE-5220". An unresolved identity stays for human review.
+ * "KEYNOTE-522" must not match "KEYNOTE-5220", and "ASCENT" must not match "ASCENT-03".
+ * An unresolved identity stays for human review.
  */
 export function nameMatchesRegistry(name: string, titles: string[], aliases: string[] = []): boolean {
-  return [name, ...aliases].some((candidate) => {
-    const base = candidate.replace(/\(.*?\)/g, " ");
-    if (compact(base).length < 4) return false;
+  // Join separators inside an identifier before checking its boundaries, including a spaced
+  // numeric suffix such as "ASCENT 03". Parentheses and sentence punctuation still delimit prose.
+  const registryFields = titles.map((title) => title
+    .replace(/([a-z0-9])[._/:\-‐‑‒–—]+(?=[a-z0-9])/gi, "$1")
+    .replace(/([a-z0-9])(?:\s+|\s*[._/:\-‐‑‒–—]+\s*)(?=\d)/gi, "$1"));
+  return [name, ...aliases].some((candidate) => [candidate, candidate.replace(/\(.*?\)/g, " ")].some((base) => {
+    // Try the complete title first: removing an internal parenthetical can break an exact match.
+    const whole = compact(base);
+    // OAK and IoN are real trial names, but a short word inside prose is weak identity evidence.
+    if (whole.length < 4) return whole.length >= 3 && registryFields.some((title) => compact(title) === whole);
     const parts = base.toLowerCase().match(/[a-z]+|\d+/g) ?? [];
     const pattern = new RegExp(`(?:^|[^a-z0-9])${parts.join("[^a-z0-9]*")}(?:$|[^a-z0-9])`, "i");
-    return titles.some((title) => pattern.test(title));
-  });
+    return registryFields.some((title) => pattern.test(title));
+  }));
 }
 
 type DrugsFdaApp = { application_number?: string; sponsor_name?: string; openfda?: { generic_name?: string[]; brand_name?: string[] }; submissions?: Array<{ submission_type?: string; submission_status?: string; submission_status_date?: string }> };
