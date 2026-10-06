@@ -100,7 +100,7 @@ export function CommandPalette() {
   const [groups, setGroups] = useState<KindGroup<Item>[]>(PAGE_GROUPS);
   const items = useMemo(() => flattenGroups(groups), [groups]);
   const [active, setActive] = useState(0);
-  const [ready, setReady] = useState(false);
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [indexed, setIndexed] = useState(0);
   const { kind: kindName, status: statusName } = useT();
   const input = useRef<HTMLInputElement>(null);
@@ -108,6 +108,8 @@ export function CommandPalette() {
   const dialog = useRef<HTMLDivElement>(null);
   const opener = useRef<HTMLElement | null>(null);
   const pendingG = useRef<number | null>(null);
+  const request = useRef(0);
+  const query = useRef("");
   const router = useRouter();
 
   // Global shortcut layer: ⌘K / Ctrl+K and Escape always; single keys only outside text fields and dialogs,
@@ -146,30 +148,39 @@ export function CommandPalette() {
     return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("onco:open-palette", onOpen); window.removeEventListener("onco:open-shortcuts", onSheet); };
   }, [open, sheet, router]);
 
-  useEffect(() => {
-    if (!open) return;
-    opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const t = setTimeout(() => input.current?.focus(), 0);
-    loadSearch().then(({ docs }) => { setIndexed(docs.length); setReady(true); });
-    document.body.style.overflow = "hidden";
-    return () => { clearTimeout(t); document.body.style.overflow = ""; opener.current?.focus?.(); };
-  }, [open]);
-
+  // Preloading, typing and reopening share one load state, so a successful retry also clears the failure.
   const run = useCallback((value: string) => {
+    const current = ++request.current;
+    query.current = value;
     setActive(0);
     const needle = value.trim().toLowerCase();
-    if (!needle) { setGroups(PAGE_GROUPS); return; }
-    const pages = PAGES.filter((p) => `${p.name} ${p.tldr}`.toLowerCase().includes(needle)).slice(0, PAGE_MATCHES);
-    loadSearch().then(({ ms }) => {
+    const pages = needle ? PAGES.filter((p) => `${p.name} ${p.tldr}`.toLowerCase().includes(needle)).slice(0, PAGE_MATCHES) : PAGES;
+    setGroups(needle ? groupByKind(pages, VISIBLE) : PAGE_GROUPS);
+    setLoadState("loading");
+    loadSearch().then(({ ms, docs }) => {
+      if (request.current !== current) return;
+      setIndexed(docs.length);
+      setLoadState("ready");
+      if (!needle) return;
       // The whole ranked list comes back so the grouping can take the top rows of each kind; a page the tool list
       // already matched is not repeated from the index.
       const seen = new Set(pages.map((p) => p.route));
       const hits: Item[] = searchRanked(ms, value).filter((h) => !seen.has(h.route)).map((h) => ({ id: h.id, kind: h.kind, name: h.name, tldr: h.tldr, route: h.route, status: h.status }));
       setGroups(groupByKind([...pages, ...hits], VISIBLE));
-    });
+    }).catch(() => { if (request.current === current) setLoadState("error"); });
   }, []);
 
-  const go = (item: Item) => { setOpen(false); setQ(""); setGroups(PAGE_GROUPS); router.push(item.route); };
+  useEffect(() => {
+    if (!open) return;
+    opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const t = setTimeout(() => input.current?.focus(), 0);
+    const pendingRequest = request;
+    run(query.current);
+    document.body.style.overflow = "hidden";
+    return () => { pendingRequest.current++; clearTimeout(t); document.body.style.overflow = ""; opener.current?.focus?.(); };
+  }, [open, run]);
+
+  const go = (item: Item) => { setOpen(false); query.current = ""; setQ(""); setGroups(PAGE_GROUPS); router.push(item.route); };
 
   /** Focus trap: Tab cycles through the dialog's own controls (the input and the footer button) and never leaves. */
   const trap = (e: React.KeyboardEvent) => {
@@ -183,6 +194,7 @@ export function CommandPalette() {
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if (!items.length) return;
     if (e.key === "ArrowDown") { e.preventDefault(); setActive((a) => Math.min(a + 1, items.length - 1)); }
     else if (e.key === "ArrowUp") { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
     else if (e.key === "Home") { e.preventDefault(); setActive(0); }
@@ -210,8 +222,9 @@ export function CommandPalette() {
           <kbd className="hidden sm:inline text-[10px] text-muted border border-border rounded px-1.5 py-0.5">esc</kbd>
         </div>
         <ul id="palette-list" ref={list} className="max-h-[60vh] overflow-auto py-1" role="listbox" aria-label="Results">
-          {!ready && q && <li className="px-4 py-3 text-sm text-muted" role="presentation">Loading index…</li>}
-          {items.length === 0 && ready && <li className="px-4 py-3 text-sm text-muted" role="presentation">No matches.</li>}
+          {loadState === "loading" && q && <li className="px-4 py-3 text-sm text-muted" role="presentation">Loading index…</li>}
+          {loadState === "error" && <li className="px-4 py-3 text-sm text-muted" role="presentation"><span role="alert">Search is unavailable. Type to try again, or close and reopen search.</span></li>}
+          {items.length === 0 && loadState === "ready" && <li className="px-4 py-3 text-sm text-muted" role="presentation">No matches.</li>}
           {rows.map((g) => [
             <KindGroupHeader key={`h-${g.kind}`} kind={g.kind} label={g.kind === "page" ? undefined : kindName(g.kind, "title")} />,
             ...g.rows.map(({ it, i }) => (
@@ -236,7 +249,7 @@ export function CommandPalette() {
           <span><kbd className="border border-border rounded px-1">↵</kbd> open</span>
           <span><kbd className="border border-border rounded px-1">⌘K</kbd> toggle</span>
           <button type="button" onClick={() => { setOpen(false); setSheet(true); }} className="underline hover:text-foreground">All shortcuts <kbd className="border border-border rounded px-1">?</kbd></button>
-          <span className="ml-auto" aria-live="polite">{ready ? `${indexed.toLocaleString("en-GB")} objects indexed` : ""}</span>
+          <span className="ml-auto" aria-live="polite">{loadState === "ready" ? `${indexed.toLocaleString("en-GB")} objects indexed` : ""}</span>
         </div>
       </div>
     </div>
