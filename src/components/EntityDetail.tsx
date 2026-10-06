@@ -191,6 +191,10 @@ export function EntityDetail({ e }: { e: Entity }) {
           : <div className="grid *:min-w-0 gap-10 lg:grid-cols-[1fr_300px]"><div className="min-w-0"><div className="space-y-10">{tabs.map((t) => <Block key={t.id} title={t.id === "overview" ? undefined : t.label}>{t.content}</Block>)}</div>{afterTabs}</div>{aside}</div>}
       </Container>
       <SourceList e={e} />
+      {/* Who last edited this and when. It opened the right-hand column until 6 October 2026; the owner: "not
+          useful surface area, this should goto the bottom of the page". It is provenance, which a reader wants
+          after the page rather than before it. */}
+      <Container className="pb-4"><ProvenanceLine id={e.id} /></Container>
       <MachineLinks e={e} />
     </>
   );
@@ -210,8 +214,12 @@ function keyedContent(tabs: Tab[]): Tab[] {
 const PACK_KINDS: ReadonlySet<Kind> = new Set<Kind>(["cancer", "drug", "trial", "term"]);
 
 /**
- * The right-hand column of a record page: evidence, provenance, Wikipedia and tags, data, suggest an edit,
+ * The right-hand column of a record page: evidence, Wikipedia and tags, the patient pack, suggest an edit,
  * quick links, and last of all the review panel.
+ *
+ * Provenance, the source count and the JSON link all left it on 6 October 2026. Each was a pointer to
+ * something that now lives at the foot of the page, and a pointer above the fold costs more attention than the
+ * thing it points at is worth.
  *
  * The sources are no longer here. `e.links` rendered as one unbounded list, 124 of them on pancreatic cancer
  * and 109 on triple-negative breast cancer, so the column was worst on the pages with the most work in them
@@ -230,21 +238,12 @@ export function RecordAside({ e }: { e: Entity }) {
             {e.kind === "person" && <PortraitCredit id={e.id} />}
             {e.kind === "technology" && e.tags.some((t) => t.startsWith("evidence:")) && <div className="card p-4 text-sm"><div className="kicker mb-1.5">Evidence grade</div><EvidenceGradeChip tags={e.tags} /><p className="text-[11px] text-muted mt-2">How much and what kind of evidence, for the stated purpose. Grades are explained on the <Link className="underline" href="/live/complementary/">complementary approaches page</Link>.</p></div>}
             {(e.kind === "drug" || e.kind === "technology" || e.kind === "target" || e.kind === "trial") && <EvidenceBar e={e} />}
-            <ProvenanceLine id={e.id} />
             <div className="card p-4 text-sm space-y-3">
               {e.wikipedia && <div><div className="kicker mb-1"><TL text="Wikipedia" /></div><a className="underline break-all" href={e.wikipedia} rel="noopener">{decodeURIComponent(e.wikipedia.replace("https://en.wikipedia.org/wiki/", "")).replace(/_/g, " ")}</a></div>}
               {!e.wikipedia && e.kind === "term" && e.wikipediaChecked && <div><div className="kicker mb-1"><TL text="Wikipedia" /></div><p className="text-muted" title={`English Wikipedia searched on ${e.wikipediaChecked}: no article with this name or any of its aliases`}><TL text="No Wikipedia article" /></p></div>}
-              {e.links.filter((l) => l.url !== e.wikipedia).length > 0 && (
-                <div><div className="kicker mb-1"><TL text="Sources" /></div>
-                  <a className="underline" href="#sources">{e.links.filter((l) => l.url !== e.wikipedia).length} <TL text="sources, at the foot of the page" /></a>
-                </div>
-              )}
               {publicTags(e.tags).length > 0 && <div><div className="kicker mb-1"><Link href="/tagged/" className="hover:underline"><TL text="Tags" /></Link></div><div className="flex flex-wrap gap-1" data-tag-chips>{publicTags(e.tags).map((t) => <Link key={t} href={tagRoute(t)} className="chip bg-foreground/5 hover:bg-accent-soft hover:text-accent" title={`Every record tagged ${t}`}>{t}</Link>)}</div></div>}
-              <div><div className="kicker mb-1"><TL text="Data" /></div>
-                <a className="underline" href={`/api/v1/entities/${e.id}.json`}>JSON</a>
-                {PACK_KINDS.has(e.kind) && <><span className="text-muted"> · </span><PrintButton className="underline" asOf={e.asOf} title={e.name} /></>}
-              </div>
             </div>
+            {PACK_KINDS.has(e.kind) && <div className="card p-4 text-sm no-print"><PrintButton className="underline" asOf={e.asOf} title={e.name} /></div>}
             <SuggestEdit id={e.id} kind={e.kind} name={e.name} fields={Object.keys(e)} source={sourceLocation(e.id, e.kind)} route={routeFor(e)} asOf={e.asOf} />
             {e.kind !== "cancer" && <QuickLinks e={e} />}
             <div data-review><ReviewBadge id={e.id} /></div>

@@ -193,7 +193,7 @@ export const EN = {
 
   // ---- suggest an edit card ----
   "suggest.follow": "Follow this page",
-  "suggest.wrong": "Wrong or missing?",
+  "suggest.wrong": "Improve the information",
   "suggest.body": "Propose a change with a source. Organisations can update their own records. Every suggestion is reviewed, safety-checked and validated before it goes live; nothing is edited directly.",
   "suggest.cta": "Suggest an edit",
   "suggest.stale": "Out of date?",

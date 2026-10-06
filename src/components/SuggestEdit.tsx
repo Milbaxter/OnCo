@@ -1,8 +1,6 @@
-import Link from "next/link";
 import type { Kind } from "@/lib/kinds";
 import type { SourceLocation } from "@/lib/source-location";
 import { issueUrl, suggestEditUrl, entityRef, pageUrl } from "@/lib/issue-links";
-import { DiscussLink } from "./DiscussLink";
 import { WatchButton } from "./WatchButton";
 import { T } from "./T";
 
@@ -31,15 +29,15 @@ export function SuggestEdit({ id, kind, name, source, route, asOf }: Props) {
       </div>
       <div className="kicker mb-1"><T k="suggest.wrong" /></div>
       <p className="text-muted"><T k="suggest.body" /></p>
-      <div className="mt-2 flex flex-wrap gap-2">
+      {/* One way in. There were two, an edit form and a discussion thread, and the owner asked for a single
+          entry point: "i only want a single entry point to improve the page". */}
+      <div className="mt-2">
         <a href={suggest} rel="noopener" className="rounded-lg bg-foreground text-background px-3 py-1.5 text-xs font-medium hover:brightness-110"><T k="suggest.cta" /></a>
-        <DiscussLink id={id} kind={kind} name={name} className="rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-foreground/5" />
       </div>
       <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
         <li><a className="underline" href={stale} rel="noopener"><T k="suggest.stale" /></a></li>
         {readout && <li><a className="underline" href={readout} rel="noopener"><T k="suggest.readout" /></a></li>}
         {approval && <li><a className="underline" href={approval} rel="noopener"><T k="suggest.approval" /></a></li>}
-        <li><Link className="underline" href="/suggest/"><T k="suggest.how" /></Link></li>
       </ul>
     </div>
   );

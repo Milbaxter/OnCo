@@ -213,9 +213,11 @@ describe("the sources move to the foot of the page", () => {
       const cited = e.links.filter((l) => l.url !== e.wikipedia);
       expect(cited.length, `${id} is one of the heavy pages`).toBeGreaterThan(20);
 
-      // The aside says how many and where, and does not carry the list.
+      // The aside carries neither the list nor a pointer to it. It said "109 sources, at the foot of the page"
+      // until 6 October 2026, when the owner took that line out with the provenance and the JSON link: each was
+      // a pointer above the fold to something at the foot, and the pointer cost more attention than it saved.
       const aside = renderToStaticMarkup(createElement(AppRouterContext.Provider, { value: router }, createElement(RecordAside, { e })));
-      expect(aside).toContain(`href="#sources"`);
+      expect(aside).not.toContain(`href="#sources"`);
       const asideLinks = cited.filter((l) => aside.includes(l.url));
       expect(asideLinks.length, `${id}: sources still in the aside`).toBe(0);
 
