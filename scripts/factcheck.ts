@@ -133,20 +133,29 @@ const compact = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
  * "KEYNOTE-522" must not match "KEYNOTE-5220", and "ASCENT" must not match "ASCENT-03".
  * An unresolved identity stays for human review.
  */
-export function nameMatchesRegistry(name: string, titles: string[], aliases: string[] = []): boolean {
-  // Join separators inside an identifier before checking its boundaries, including a spaced
-  // numeric suffix such as "ASCENT 03". Parentheses and sentence punctuation still delimit prose.
-  const registryFields = titles.map((title) => title
-    .replace(/([a-z0-9])[._/:\-‐‑‒–—]+(?=[a-z0-9])/gi, "$1")
-    .replace(/([a-z0-9])(?:\s+|\s*[._/:\-‐‑‒–—]+\s*)(?=\d)/gi, "$1"));
+export function nameMatchesRegistry(name: string, titles: string[], aliases: string[] = [], identifiers: string[] = []): boolean {
+  // Acronyms and protocol ids require whole-field equality. Only prose titles can contain the
+  // name in context; keep their text intact so we can inspect the boundaries of each match.
+  const completeFields = new Set([...titles, ...identifiers].map(compact));
   return [name, ...aliases].some((candidate) => [candidate, candidate.replace(/\(.*?\)/g, " ")].some((base) => {
     // Try the complete title first: removing an internal parenthetical can break an exact match.
     const whole = compact(base);
+    if (whole.length >= 3 && completeFields.has(whole)) return true;
     // OAK and IoN are real trial names, but a short word inside prose is weak identity evidence.
-    if (whole.length < 4) return whole.length >= 3 && registryFields.some((title) => compact(title) === whole);
+    if (whole.length < 4) return false;
     const parts = base.toLowerCase().match(/[a-z]+|\d+/g) ?? [];
-    const pattern = new RegExp(`(?:^|[^a-z0-9])${parts.join("[^a-z0-9]*")}(?:$|[^a-z0-9])`, "i");
-    return registryFields.some((title) => pattern.test(title));
+    const pattern = new RegExp(`(^|[^a-z0-9])(${parts.join("[^a-z0-9]*")})(?=$|[^a-z0-9])`, "gi");
+    return titles.some((title) => {
+      for (const match of title.matchAll(pattern)) {
+        const start = match.index + match[1].length;
+        const before = title.slice(0, start), after = title.slice(start + match[2].length);
+        // A separated prefix or suffix can still be part of the identifier ("PREFIX / ALPHA-123",
+        // "ALPHA-123 - EXT", "ASCENT 03"). Ambiguous subtitle fragments wait for human review.
+        if (/[a-z0-9]\s*[._/:\-‐‑‒–—]+\s*$/i.test(before) || /^\s*[._/:\-‐‑‒–—]+\s*[a-z0-9]/i.test(after) || /^\s+\d/.test(after)) continue;
+        return true;
+      }
+      return false;
+    });
   }));
 }
 
@@ -175,10 +184,11 @@ export function checkRegistryTrial(t: Trial, ps: TrialProtocol | undefined, toda
   const patches: Patch[] = [];
 
   const im = ps?.identificationModule ?? {};
-  // Acronym, titles and the sponsor's own protocol ids (COG "ACNS0331", "RTOG 0129", "ISG-STS 1001"), which the titles often omit.
-  const titles = [im.acronym ?? "", im.briefTitle ?? "", im.officialTitle ?? "", im.orgStudyIdInfo?.id ?? "", ...(im.secondaryIdInfos ?? []).map((s) => s.id ?? "")];
-  const hasIdentity = titles.some((title) => compact(title).length > 0);
-  if (!hasIdentity || !nameMatchesRegistry(t.name, titles, t.aka)) {
+  const titles = [im.briefTitle ?? "", im.officialTitle ?? ""];
+  // The sponsor's own protocol ids (COG "ACNS0331", "RTOG 0129", "ISG-STS 1001") are often absent from titles.
+  const identifiers = [im.acronym ?? "", im.orgStudyIdInfo?.id ?? "", ...(im.secondaryIdInfos ?? []).map((s) => s.id ?? "")];
+  const hasIdentity = [...titles, ...identifiers].some((value) => compact(value).length > 0);
+  if (!hasIdentity || !nameMatchesRegistry(t.name, titles, t.aka, identifiers)) {
     mismatches.push({ check: "nct-title-mismatch", id: t.id, name: t.name, route: routeFor(t), recorded: `${t.nct}: "${t.name}"`, registry: hasIdentity ? `${im.acronym ? `${im.acronym}: ` : ""}${(im.briefTitle ?? im.officialTitle ?? "").slice(0, 120)}` : "registry returned no study title or identifier", url: registryUrl, severity: "medium" });
     // The registry may describe another study. Keep the identity warning for a person to resolve,
     // but do not offer its phase, enrolment or status as corrections to this record (including --all).

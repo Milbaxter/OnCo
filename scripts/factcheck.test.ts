@@ -45,9 +45,24 @@ describe("registry identity gates patch proposals", () => {
     ["ALPHA-123", "ALPHA-123:2"],
     ["ALPHA-123", "ALPHA-123–2"],
     ["ALPHA-123", "ALPHA-123-EXT"],
+    ["ALPHA-123", "ALPHA-123 - EXT"],
+    ["ALPHA-123", "ALPHA-123 / EXT"],
+    ["ALPHA-123", "ALPHA-123– EXT"],
     ["ALPHA-123", "PREFIX/ALPHA-123"],
+    ["ALPHA-123", "PREFIX / ALPHA-123"],
   ])("holds patches when %s is only part of identifier %s", (name, acronym) => {
     const result = checkRegistryTrial({ ...trial, name }, { ...registry, identificationModule: { acronym } }, "2026-10-05");
+    expect(result.patches).toEqual([]);
+    expect(result.mismatches.map((m) => m.check)).toEqual(["nct-title-mismatch"]);
+  });
+
+  it.each([
+    { orgStudyIdInfo: { id: "ALPHA-123 - EXT" } },
+    { secondaryIdInfos: [{ id: "PREFIX / ALPHA-123" }] },
+    { briefTitle: "ALPHA-123 / EXT" },
+    { officialTitle: "PREFIX / ALPHA-123" },
+  ])("holds ambiguous partial identifiers in every registry field: %j", (identificationModule) => {
+    const result = checkRegistryTrial(trial, { ...registry, identificationModule }, "2026-10-05");
     expect(result.patches).toEqual([]);
     expect(result.mismatches.map((m) => m.check)).toEqual(["nct-title-mismatch"]);
   });
@@ -96,6 +111,12 @@ describe("registry identity gates patch proposals", () => {
     expect(checkRegistryTrial({ ...trial, aka: ["STUDY 456"] }, alias, "2026-10-05").patches).toHaveLength(3);
   });
 
+  it("requires the whole protocol identifier even when its prefix is separated only by a space", () => {
+    const matched = { ...registry, identificationModule: { orgStudyIdInfo: { id: "PREFIX ALPHA-123" } } };
+    expect(checkRegistryTrial(trial, matched, "2026-10-05").patches).toEqual([]);
+    expect(checkRegistryTrial({ ...trial, aka: ["PREFIX ALPHA123"] }, matched, "2026-10-05").patches).toHaveLength(3);
+  });
+
   it("matches a complete descriptive title or a trial name with parenthetical context", () => {
     const source = { ...trial, name: "Atezolizumab with radiotherapy in breast cancer" };
     const titled = { ...registry, identificationModule: { officialTitle: "Atezolizumab With Radiotherapy in Breast Cancer" } };
@@ -112,10 +133,17 @@ describe("registry identity gates patch proposals", () => {
     expect(result.mismatches.map((m) => m.check)).not.toContain("nct-title-mismatch");
   });
 
-  it.each(["(ALPHA-123)", "ALPHA-123: A study of pembrolizumab", "Study ALPHA-123.", "Trial ALPHA 123 (primary analysis)"])("retains surrounding title punctuation in %s", (briefTitle) => {
+  it.each(["(ALPHA-123)", "ALPHA-123, a study of pembrolizumab", "Study ALPHA-123.", "Trial ALPHA 123 (primary analysis)"])("retains surrounding title punctuation in %s", (briefTitle) => {
     const result = checkRegistryTrial(trial, { ...registry, identificationModule: { briefTitle } }, "2026-10-05");
     expect(result.patches).toHaveLength(3);
     expect(result.mismatches.map((m) => m.check)).not.toContain("nct-title-mismatch");
+  });
+
+  it.each(["ALPHA-123: A study of pembrolizumab", "ALPHA-123 - A study of pembrolizumab"])("accepts the complete title %s but holds the ambiguous fragment", (name) => {
+    const matched = { ...registry, identificationModule: { briefTitle: name } };
+    expect(checkRegistryTrial({ ...trial, name }, matched, "2026-10-05").patches).toHaveLength(3);
+    expect(checkRegistryTrial(trial, matched, "2026-10-05").patches).toEqual([]);
+    expect(checkRegistryTrial(trial, { ...matched, identificationModule: { ...matched.identificationModule, acronym: trial.name } }, "2026-10-05").patches).toHaveLength(3);
   });
 
   it.each(["OAK", "IoN"])("accepts the short trial name %s when it matches a complete registry field", (name) => {
