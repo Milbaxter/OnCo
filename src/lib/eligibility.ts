@@ -200,19 +200,23 @@ const NEGATIVE_BM = /(negative|wild[- ]?type|\bWT\b|without|lacking|absence of|n
 const REQUIRED_CUE = /(positive|\+\b|mutat|alteration|amplif|overexpress|express|rearrang|fusion|documented|confirmed|known|deficien|high|≥|>=|status)/i;
 
 /** Read an explicit result attached to this marker before considering sentence-wide wording. */
-function markerPolarity(text: string, name: string, pattern: RegExp): "positive" | "negative" | undefined {
-  if (name === "HR-negative") return "negative";
-  if (name === "HR-positive" || name === "HER2-low" || name === "Triple-negative") return "positive";
+function markerPolarity(text: string, name: string, pattern: RegExp): "positive" | "negative" | "unclear" | undefined {
   const match = pattern.exec(text);
   if (!match) return undefined;
   const after = text.slice(match.index + match[0].length);
   const before = text.slice(0, match.index);
+  // The absence applies to this marker even when its following word is "expression" or "amplification".
+  // Keep the prefix anchored: "without distant metastases, HER2-positive" must still mean HER2-positive.
+  const negated = /\b(?:negative for|without(?: (?:any )?evidence of)?|absence of|lacking|no(?: known| (?:any )?evidence of)?)\s*$/i.test(before);
   // A trailing minus is a result only at a word boundary, not the hyphen in e.g. HER2-directed.
-  if (/^\s*(?:[-:]\s*)?(?:(?:mutations?|fusions?|rearrangements?|amplification|expression|status)\s*[-:]?\s*)?(?:negative\b|wild[- ]?type\b|WT\b|not detected\b|loss\b)/i.test(after)
+  if (name === "HR-negative"
+    || /^\s*(?:[-:]\s*)?(?:(?:mutations?|fusions?|rearrangements?|amplification|expression|status)\s*[-:]?\s*)?(?:negative\b|wild[- ]?type\b|WT\b|not detected\b|loss\b)/i.test(after)
     || /^\s*[-−](?=\W|$)/.test(after)
-    || /(?:negative for|without|absence of|no known)\s*$/i.test(before)) return "negative";
-  // HER2 denotes the positive result in this pre-screener; HER2-low is a separate canonical marker.
-  if (name === "HER2" && /^[- ]low\b/i.test(after)) return "negative";
+  ) return negated ? "unclear" : "negative";
+  // Absence of HER2-low does not establish HER2-positive or HER2-negative.
+  if (name === "HER2" && /^[- ]low\b/i.test(after)) return negated ? "unclear" : "negative";
+  if (negated) return "negative";
+  if (name === "HR-positive" || name === "HER2-low" || name === "Triple-negative") return "positive";
   if (/^\s*(?:[-:]\s*)?(?:positive\b|mutat|amplif|overexpress|express|rearrang|fusion|deficien|high\b)/i.test(after)
     || /^\s*\+(?=\W|$)/.test(after)
     || /positive for\s*$/i.test(before)) return "positive";
@@ -229,10 +233,30 @@ function biomarkerMentions(text: string): Array<{ start: number; end: number }> 
   return mentions;
 }
 
-/** Do not turn "A or B" into "A and B". */
+/** Only remove recognised annotations and simple relative modifiers, never an alternative disease branch. */
+function biomarkerLogicText(text: string): string {
+  const assayResult = /^(?:(?:IHC|ISH)\s*)?(?:[0-3]\+?(?:\s*\/\s*ISH\s*[-−+])?|amplified|negative|positive)$/i;
+  const withoutAssays = text.replace(/\(([^()]*)\)/g, (whole, inner: string) =>
+    /^\s*(?:IHC|ISH)\b/i.test(inner) && inner.split(/\s*,\s*|\s+or\s+/i).every((part) => assayResult.test(part.trim())) ? " " : whole);
+  // "HER2-positive cancer that is unresectable or metastatic" asserts HER2 outside the relative clause.
+  // More elaborate relative clauses remain unresolved rather than guessing the scope of their connectors.
+  return withoutAssays.replace(/\b(?:that|which)\s+(?:is|are)\s+[a-z-]+(?:\s+(?:or|and)\s+[a-z-]+)+[.;]?\s*$/i,
+    (clause) => biomarkerMentions(clause).length ? clause : "");
+}
+
+/** A non-marker alternative can qualify too; do not require a named marker merely because it is recognised. */
 function hasBiomarkerAlternatives(text: string): boolean {
-  const mentions = biomarkerMentions(text);
-  return mentions.some((m, i) => i > 0 && /\bor\b/i.test(text.slice(mentions[i - 1].end, m.start)));
+  return biomarkerMentions(text).length > 0 && /\bor\b/i.test(biomarkerLogicText(text));
+}
+
+/** NOT(A OR B) can be flattened only when every branch is one explicit positive result. */
+function simplePositiveAlternatives(text: string): boolean {
+  const branches = biomarkerLogicText(text).split(/\bor\b/i);
+  return branches.length > 1 && branches.every((branch) => {
+    if (/\band\b|[,;]/i.test(branch) || biomarkerMentions(branch).length !== 1) return false;
+    const marker = BIOMARKER_PATTERNS.find(([, pattern]) => pattern.test(branch));
+    return marker !== undefined && markerPolarity(branch, ...marker) === "positive";
+  });
 }
 
 /** Attach structured tags to one criterion. Exported for tests. */
@@ -279,9 +303,11 @@ export function tagCriterion(text: string, kind: CriterionKind): CriterionTags {
   const alternatives = hasBiomarkerAlternatives(s);
   // NOT(A AND B) cannot be expressed by requiring NOT A and NOT B. Leave combined exclusions
   // for the team; only a list of positive alternatives has the existing exclude-each interpretation.
-  const combinedExclusion = kind === "exclusion" && biomarkerMentions(s).length > 1
-    && (!alternatives || found.length < 2 || found.some(([name, pattern]) => markerPolarity(s, name, pattern) === "negative"));
-  if ((kind === "inclusion" && alternatives) || combinedExclusion) t.biomarkersUnclear = true;
+  const combinedExclusion = kind === "exclusion" && found.length > 0
+    && (biomarkerMentions(s).length > 1 || alternatives || /\band\b/i.test(biomarkerLogicText(s)))
+    && !simplePositiveAlternatives(s);
+  if ((kind === "inclusion" && alternatives) || combinedExclusion
+    || found.some(([name, pattern]) => markerPolarity(s, name, pattern) === "unclear")) t.biomarkersUnclear = true;
   else if (found.length) {
     const negative = NEGATIVE_BM.test(s);
     const required = REQUIRED_CUE.test(s);
@@ -331,6 +357,7 @@ export function profileBiomarkers(ids: string[], labels: Record<string, string>)
     for (const [name, re] of BIOMARKER_PATTERNS) {
       if (!re.test(label)) continue;
       const polarity = markerPolarity(label, name, re);
+      if (polarity === "unclear") continue;
       const canonical = name === "HR-negative" ? "HR-positive" : name;
       if (polarity === "negative" || (!polarity && /negative|wild[- ]?type|\bWT\b|loss|not detected/i.test(label) && !/positive/i.test(label))) absent.add(canonical);
       else present.add(canonical);
@@ -362,6 +389,12 @@ export function score(criteria: Criterion[], profile: ScoreProfile, ctx: ScoreCo
 
   for (const c of criteria) {
     const tg = c.tags;
+    // The same unresolved Boolean clause can also have age or therapy tags. None of its branches alone
+    // proves that the whole criterion is met or contradicted.
+    if (tg.biomarkersUnclear) {
+      checklist.push({ criterion: c, status: "unknown", why: "This criterion combines biomarker results or alternative requirements in a way OnCo cannot assess. The trial team needs to check how it applies to your profile." });
+      continue;
+    }
     const checks: Array<[CheckStatus, string]> = [];
 
     if (tg.ecog) checks.push(["unknown", `Needs a performance status of ${tg.ecog.length === 1 ? `ECOG ${tg.ecog[0]}` : `ECOG ${tg.ecog[0]} to ${tg.ecog[tg.ecog.length - 1]}`}. OnCo does not record fitness; your team scores this in clinic.`]);
@@ -392,7 +425,6 @@ export function score(criteria: Criterion[], profile: ScoreProfile, ctx: ScoreCo
       else if (bm.absent.has(b)) checks.push(["met", `Excludes ${b}; your profile says your cancer does not have it.`]);
       else checks.push(["unknown", `Excludes ${b}. Not in your profile; if your tumour has been tested, add the result.`]);
     }
-    if (tg.biomarkersUnclear) checks.push(["unknown", "This criterion combines biomarker results in a way OnCo cannot assess. The trial team needs to check how it applies to your profile."]);
 
     if (tg.age) {
       const range = tg.age.min !== undefined && tg.age.max !== undefined ? `${tg.age.min} to ${tg.age.max}` : tg.age.min !== undefined ? `${tg.age.min} or older` : `up to ${tg.age.max}`;

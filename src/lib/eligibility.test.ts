@@ -213,3 +213,81 @@ describe("score", () => {
     expect(s.verdict).toBe("unclear");
   });
 });
+
+describe("biomarker negation and Boolean scope", () => {
+  const labels = { her2: "HER2-positive", noHer2: "HER2-negative", hr: "HR-positive" };
+  const evaluate = (text: string, kind: "inclusion" | "exclusion", biomarkers: string[]) =>
+    score(parseCriteria(`${kind === "inclusion" ? "Inclusion" : "Exclusion"} Criteria:\n* ${text}`),
+      { stage: "unknown", biomarkers, priorLines: [] }, { biomarkerLabels: labels, drugNames: {} });
+
+  it.each([
+    "Without evidence of HER2 expression.",
+    "Without any evidence of HER2 amplification.",
+    "No evidence of HER2 expression.",
+  ])("keeps a local absence phrase ahead of a positive result cue: %s", (text) => {
+    const tags = tagCriterion(text, "inclusion");
+    expect(tags.biomarkersExcluded).toEqual(["HER2"]);
+    expect(tags.biomarkers).toBeUndefined();
+    expect(evaluate(text, "inclusion", ["her2"]).verdict).toBe("unlikely");
+    expect(evaluate(text, "inclusion", ["noHer2"]).verdict).toBe("likely");
+    expect([...profileBiomarkers(["result"], { result: text }).absent]).toEqual(["HER2"]);
+  });
+
+  it("keeps negation local and does not use it from an unrelated disease finding", () => {
+    const text = "Without evidence of distant metastases, HER2-positive disease.";
+    expect(tagCriterion(text, "inclusion").biomarkers).toEqual(["HER2"]);
+    expect(evaluate(text, "inclusion", ["her2"]).verdict).toBe("likely");
+  });
+
+  it("does not infer the opposite result from a negated negative or low label", () => {
+    expect(evaluate("Without evidence of HER2-negative disease.", "inclusion", ["her2"]).verdict).toBe("unclear");
+    const bm = profileBiomarkers(["result"], { result: "Without evidence of HER2-low disease." });
+    expect(bm.present.has("HER2")).toBe(false);
+    expect(bm.absent.has("HER2")).toBe(false);
+    expect(bm.absent.has("HER2-low")).toBe(true);
+  });
+
+  it.each([
+    "HR-positive and PIK3CA-mutated or HER2-positive disease.",
+    "HER2-positive or HR-positive and PIK3CA-mutated disease.",
+    "(HR-positive and PIK3CA-mutated) or HER2-positive disease.",
+    "HR-positive, PIK3CA-mutated or HER2-positive disease.",
+    "HR-positive and squamous histology.",
+    "HR-positive or squamous histology.",
+  ])("does not flatten mixed AND/OR exclusions: %s", (text) => {
+    const tags = tagCriterion(text, "exclusion");
+    expect(tags.biomarkersUnclear).toBe(true);
+    expect(tags.biomarkers).toBeUndefined();
+    expect(tags.biomarkersExcluded).toBeUndefined();
+    expect(evaluate(text, "exclusion", ["hr"]).verdict).toBe("unclear");
+    expect(evaluate(text, "exclusion", ["hr"]).checklist[0].status).toBe("unknown");
+  });
+
+  it.each([
+    "HER2-positive disease or squamous histology.",
+    "Squamous histology or HER2-positive disease.",
+    "HER2-positive disease (or squamous histology).",
+  ])("leaves non-marker inclusion alternatives unresolved: %s", (text) => {
+    const tags = tagCriterion(text, "inclusion");
+    expect(tags.biomarkersUnclear).toBe(true);
+    expect(tags.biomarkers).toBeUndefined();
+    expect(tags.biomarkersExcluded).toBeUndefined();
+    expect(evaluate(text, "inclusion", ["noHer2"]).verdict).toBe("unclear");
+    expect(evaluate(text, "inclusion", ["noHer2"]).checklist[0].status).toBe("unknown");
+    expect(profileBiomarkers(["result"], { result: text }).present.size).toBe(0);
+  });
+
+  it("does not score a different tag from an unresolved alternative as a definite contradiction", () => {
+    const result = score(parseCriteria("Inclusion Criteria:\n* HER2-positive disease or no more than 1 prior line of therapy."),
+      { stage: "unknown", biomarkers: ["her2"], priorLines: ["therapy-a", "therapy-b"] },
+      { biomarkerLabels: labels, drugNames: {} });
+    expect(result.verdict).toBe("unclear");
+    expect(result.checklist[0].status).toBe("unknown");
+  });
+
+  it("still assesses pure positive exclusion alternatives independently", () => {
+    const text = "HR-positive or HER2-positive disease.";
+    expect(tagCriterion(text, "exclusion").biomarkersExcluded).toEqual(expect.arrayContaining(["HR-positive", "HER2"]));
+    expect(evaluate(text, "exclusion", ["hr"]).verdict).toBe("unlikely");
+  });
+});
