@@ -127,6 +127,24 @@ describe("saved data import persistence", () => {
     expect(storage.setItem.mock.calls.map(([key]) => key)).toEqual([VIEWS]);
   });
 
+  it("releases capacity from a shrinking watchlist before writing growing views", () => {
+    store.set(WATCH, JSON.stringify([watched("alpha", "Old name ".repeat(550))]));
+    quota = [...store].reduce((n, [k, v]) => n + k.length + v.length, 0);
+    expect(api.importSavedData(JSON.stringify({ views: [view("/drugs/", "Imported products")], watchlist: [watched()] }))).toBe(2);
+    expect(views.loadViews().map((v) => v.name)).toEqual(["Imported products", "Original trials"]);
+    expect(watchlist.loadWatchlist().map((w) => w.name)).toEqual(["Imported Alpha"]);
+    expect(storage.setItem.mock.calls.map(([key]) => key)).toEqual([WATCH, VIEWS]);
+  });
+
+  it("restores a shrinking watchlist without publishing when the later views write fails", () => {
+    store.set(WATCH, JSON.stringify([watched("alpha", "Old name ".repeat(550))]));
+    const before = bytes(), list = watchlist.loadWatchlist(); failKey = VIEWS;
+    expect(() => api.importSavedData(JSON.stringify({ views: [view("/drugs/", "Imported products")], watchlist: [watched()] }))).toThrow("existing lists are unchanged");
+    expect(storage.setItem.mock.calls.map(([key]) => key)).toEqual([WATCH, VIEWS, WATCH]);
+    expect(bytes()).toEqual(before); expect(watchlist.loadWatchlist()).toEqual(list);
+    expect(watchlist.storageBlocked).toBe(false); expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it("persists existing visit-only watches too when a later import succeeds", () => {
     failKey = WATCH; watchlist.watch({ id: "temporary", kind: "term", name: "Temporary", route: "/terms/temporary/" });
     failKey = null; dispatch.mockClear();

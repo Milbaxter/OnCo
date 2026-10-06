@@ -32,6 +32,9 @@ export function importSavedData(text: string): number {
   const updates: Array<{ key: string; value: string; previous: string | null }> = [];
   if (hasViews) updates.push({ key: SAVED_VIEWS_KEY, value: JSON.stringify(views), previous: previousViews });
   if (hasWatchlist) updates.push({ key: WATCHLIST_KEY, value: JSON.stringify(watching), previous: previousWatchlist });
+  // Free capacity before growing another key so an import that fits in total can be saved.
+  const growth = (update: typeof updates[number]) => update.value.length - (update.previous?.length ?? 0);
+  updates.sort((a, b) => growth(a) - growth(b));
   const written: typeof updates = [];
   try {
     // Replace the real keys directly: a temporary copy could exceed quota even when replacement fits.
