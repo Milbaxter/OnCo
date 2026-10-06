@@ -59,7 +59,7 @@ async function harvest(matcher: NameMatcher, kindOf: (id: string) => string | un
     const url = `https://api.crossref.org/journals/${c.issn}/works?filter=from-pub-date:${from},until-pub-date:${to}&rows=1000&cursor=${encodeURIComponent(cursor)}&select=DOI,title,issued,issue,URL&mailto=${MAILTO}`;
     const json = await getJson<{ message?: { "total-results"?: number; "next-cursor"?: string; items?: Work[] } }>(url);
     await sleep(600);
-    if (!json?.message) { snap.errors.push(`Crossref page ${page + 1} failed`); break; }
+    if (!json?.message) throw new Error(`abstracts: ${c.label} ${year}: Crossref page ${page + 1} failed`);
     snap.total = json.message["total-results"] ?? snap.total;
     const items = json.message.items ?? [];
     for (const w of items) {
