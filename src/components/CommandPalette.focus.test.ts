@@ -8,7 +8,7 @@ vi.mock("react", async (original) => ({
   ...await original<typeof import("react")>(),
   useState: <T,>(initial: T) => {
     const i = host.cursor++;
-    if (!(i in host.slots)) host.slots[i] = initial;
+    if (!(i in host.slots)) host.slots[i] = typeof initial === "function" ? (initial as () => T)() : initial;
     return [host.slots[i], (next: T | ((value: T) => T)) => { host.slots[i] = typeof next === "function" ? (next as (value: T) => T)(host.slots[i] as T) : next; }];
   },
   useRef: <T,>(initial: T) => { const i = host.cursor++; return host.slots[i] ??= { current: initial }; },
@@ -47,6 +47,7 @@ class Input extends Element {}
 let doc: { activeElement: Element | null; body: { style: { overflow: string } } };
 let Component: typeof import("./CommandPalette").CommandPalette;
 let tree: ReactNode;
+let childMounted: boolean;
 let attached: Map<NonNullable<Props["ref"]>, Element>;
 let listeners: Map<string, (event: unknown) => void>;
 const nodes = (node: ReactNode): Node[] => {
@@ -55,6 +56,13 @@ const nodes = (node: ReactNode): Node[] => {
 };
 const draw = () => {
   host.cursor = 0; tree = Component();
+  const parentSlots = host.cursor;
+  const child = isValidElement<Props>(tree) && typeof tree.type === "function" ? tree : null;
+  if (child) tree = (child.type as (props: Props) => ReactNode)(child.props);
+  else if (childMounted) {
+    for (const slot of host.slots.splice(parentSlots)) (slot as { cleanup?: () => void } | undefined)?.cleanup?.();
+  }
+  childMounted = !!child;
   const next = new Map<NonNullable<Props["ref"]>, Element>();
   for (const node of nodes(tree)) {
     if (!node.props.ref) continue;
@@ -70,8 +78,13 @@ const draw = () => {
   }
   attached = next;
   host.effects.splice(0).forEach((effect) => effect());
+  vi.runOnlyPendingTimers();
 };
 const open = () => { listeners.get("onco:open-palette")!({}); draw(); };
+const openSheet = () => { listeners.get("onco:open-shortcuts")!({}); draw(); };
+const click = (node: Node) => { (node.props.onClick as () => void)(); draw(); };
+const sheetClose = () => nodes(tree).find((node) => node.props["aria-label"] === "Close")!;
+const allShortcuts = () => nodes(tree).find((node) => node.type === "button" && Array.isArray(node.props.children) && node.props.children.includes("All shortcuts "))!;
 const key = (key: string, modifier?: "ctrlKey" | "metaKey") => {
   listeners.get("keydown")!({ key, [modifier ?? "none"]: true, target: doc.activeElement, preventDefault() {} }); draw();
 };
@@ -90,8 +103,9 @@ const focusOpener = (input = false) => {
 };
 
 beforeEach(async () => {
+  vi.useFakeTimers();
   vi.resetModules(); host.slots = []; host.cursor = 0; host.effects = [];
-  attached = new Map(); listeners = new Map();
+  attached = new Map(); listeners = new Map(); childMounted = false;
   doc = { activeElement: null, body: { style: { overflow: "" } } };
   vi.stubGlobal("HTMLElement", Element);
   vi.stubGlobal("HTMLInputElement", Input);
@@ -105,6 +119,53 @@ beforeEach(async () => {
 afterEach(() => {
   for (const slot of host.slots) (slot as { cleanup?: () => void } | undefined)?.cleanup?.();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
+
+describe("shortcuts sheet focus restoration", () => {
+  it("restores the page control that opened the sheet with question mark", () => {
+    const opener = focusOpener(); key("?");
+    expect(doc.activeElement === sheetClose().props.ref?.current).toBe(true);
+    key("Escape"); expect(tree).toBeNull();
+    expect(doc.activeElement === opener).toBe(true);
+  });
+
+  it("restores the direct custom-event opener after the visible close button", () => {
+    const opener = focusOpener(); openSheet(); click(sheetClose());
+    expect(tree).toBeNull(); expect(doc.activeElement === opener).toBe(true);
+  });
+
+  it("restores the direct opener after backdrop dismissal", () => {
+    const opener = focusOpener(); openSheet(); dismissBackdrop();
+    expect(tree).toBeNull(); expect(doc.activeElement === opener).toBe(true);
+  });
+
+  it("retains the page opener on repeated sheet open events", () => {
+    const opener = focusOpener(); openSheet(); openSheet(); openSheet(); key("Escape");
+    expect(doc.activeElement === opener).toBe(true);
+  });
+
+  it("carries the palette's page opener through All shortcuts until both dialogs close", () => {
+    const opener = focusOpener(true); open(); click(allShortcuts());
+    expect(opener.focus).not.toHaveBeenCalled();
+    expect(doc.activeElement === sheetClose().props.ref?.current).toBe(true);
+    click(sheetClose()); expect(doc.activeElement === opener).toBe(true);
+    expect(opener.focus).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the page origin while toggling from shortcuts to the palette and back", () => {
+    const opener = focusOpener(); openSheet(); key("k", "ctrlKey");
+    expect(doc.activeElement).toBeInstanceOf(Input);
+    expect(opener.focus).not.toHaveBeenCalled();
+    key("k", "ctrlKey"); click(sheetClose());
+    expect(doc.activeElement === opener).toBe(true);
+  });
+
+  it("does not focus a sheet opener removed before dismissal", () => {
+    const opener = focusOpener(); openSheet(); opener.isConnected = false; click(sheetClose());
+    expect(tree).toBeNull(); expect(opener.focus).not.toHaveBeenCalled();
+    expect(doc.activeElement).toBeNull();
+  });
 });
 
 describe("command palette focus restoration", () => {

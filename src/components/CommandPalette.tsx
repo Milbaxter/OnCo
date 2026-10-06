@@ -110,11 +110,22 @@ export function CommandPalette() {
   const pendingG = useRef<number | null>(null);
   const router = useRouter();
 
+  const rememberOpener = useCallback(() => {
+    // Keep the page origin across repeated opens and transitions between the two dialogs.
+    if (!dialog.current && !sheet) opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  }, [sheet]);
   const openPalette = useCallback((toggle = false) => {
-    // Capture before React's autoFocus runs; repeated open events must keep the original opener.
-    if (!dialog.current) opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    rememberOpener(); // Capture before React's synchronous autoFocus runs.
     setOpen((isOpen) => toggle ? !isOpen : true);
-  }, []);
+  }, [rememberOpener]);
+  const openShortcuts = useCallback(() => { rememberOpener(); setSheet(true); }, [rememberOpener]);
+
+  const hasDialog = open || sheet;
+  useEffect(() => {
+    if (!hasDialog) return;
+    const restoreFocus = opener.current;
+    return () => { if (restoreFocus?.isConnected) restoreFocus.focus(); };
+  }, [hasDialog]);
 
   // Global shortcut layer: ⌘K / Ctrl+K and Escape always; single keys only outside text fields and dialogs,
   // and only while the reader has them on (the "?" sheet has the switch; off is remembered in this browser).
@@ -131,7 +142,7 @@ export function CommandPalette() {
       }
       switch (e.key) {
         case "/": e.preventDefault(); openPalette(); break;
-        case "?": e.preventDefault(); setSheet(true); break;
+        case "?": e.preventDefault(); openShortcuts(); break;
         case "g": pendingG.current = window.setTimeout(() => { pendingG.current = null; }, 1200); break;
         case "j": if (moveRow(1)) e.preventDefault(); break;
         case "k": if (moveRow(-1)) e.preventDefault(); break;
@@ -146,19 +157,18 @@ export function CommandPalette() {
     // Open synchronously inside the tap that asked for it: iOS only shows the keyboard when focus happens in the user gesture,
     // so the input must mount (and autofocus) before the click handler returns, not in a later timer.
     const onOpen = () => flushSync(openPalette);
-    const onSheet = () => setSheet(true);
+    const onSheet = () => openShortcuts();
     window.addEventListener("onco:open-palette", onOpen);
     window.addEventListener("onco:open-shortcuts", onSheet);
     return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("onco:open-palette", onOpen); window.removeEventListener("onco:open-shortcuts", onSheet); };
-  }, [open, sheet, router, openPalette]);
+  }, [open, sheet, router, openPalette, openShortcuts]);
 
   useEffect(() => {
     if (!open) return;
-    const restoreFocus = opener.current;
     const t = setTimeout(() => input.current?.focus(), 0);
     loadSearch().then(({ docs }) => { setIndexed(docs.length); setReady(true); });
     document.body.style.overflow = "hidden";
-    return () => { clearTimeout(t); document.body.style.overflow = ""; if (restoreFocus?.isConnected) restoreFocus.focus(); };
+    return () => { clearTimeout(t); document.body.style.overflow = ""; };
   }, [open]);
 
   const run = useCallback((value: string) => {
@@ -246,7 +256,7 @@ export function CommandPalette() {
           <span><kbd className="border border-border rounded px-1">↑</kbd> <kbd className="border border-border rounded px-1">↓</kbd> navigate</span>
           <span><kbd className="border border-border rounded px-1">↵</kbd> open</span>
           <span><kbd className="border border-border rounded px-1">⌘K</kbd> toggle</span>
-          <button type="button" onClick={() => { setOpen(false); setSheet(true); }} className="underline hover:text-foreground">All shortcuts <kbd className="border border-border rounded px-1">?</kbd></button>
+          <button type="button" onClick={() => { setOpen(false); openShortcuts(); }} className="underline hover:text-foreground">All shortcuts <kbd className="border border-border rounded px-1">?</kbd></button>
           <span className="ml-auto" aria-live="polite">{ready ? `${indexed.toLocaleString("en-GB")} objects indexed` : ""}</span>
         </div>
       </div>
@@ -286,7 +296,9 @@ function ShortcutsSheet({ onClose }: { onClose: () => void }) {
     e.preventDefault(); f[next]?.focus();
   };
   return (
-    <div className="fixed inset-0 z-[100] flex items-start justify-center bg-black/40 backdrop-blur-sm p-4 pt-[10vh]" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="fixed inset-0 z-[100] flex items-start justify-center bg-black/40 backdrop-blur-sm p-4 pt-[10vh]" onMouseDown={(e) => {
+      if (e.target === e.currentTarget) { e.preventDefault(); onClose(); }
+    }}>
       <div ref={box} role="dialog" aria-modal="true" aria-labelledby="shortcuts-title" onKeyDown={trap} className="w-full max-w-lg card shadow-2xl p-5 text-sm">
         <div className="flex items-start justify-between gap-4">
           <div>
